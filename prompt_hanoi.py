@@ -40,3 +40,20 @@ aux = B
 Output ONLY the trace, following the exact format and indentation rules above.
 ```
 CALL solve({N_DISKS}, A, C, B)"""
+
+def solve(n:int, fr:str, to:str, aux:str, ans:str) -> None:
+    tabs = '  ' * (N_DISKS - n)
+    ans += f"{tabs}CALL solve({n},{fr},{to})\n"
+    if n == 1:
+        ans += f"{tabs}  move {n} {fr} {to}\n"
+    else:
+        ans = solve(n-1, fr, aux, to, ans)
+        ans += f"{tabs}  move {n} {fr} {to}\n"
+        ans = solve(n-1, aux, to, fr, ans)
+    ans += f"{tabs}RETURN\n"
+    return ans
+
+# test
+if __name__ == "__main__":
+    ans = solve(N_DISKS, "A", "C", "B", "")
+    print(ans)
