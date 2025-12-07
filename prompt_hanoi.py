@@ -1,5 +1,9 @@
-N_DISKS = 3
-PROMPT_HANOI = f"""Rules:
+N_DISKS: int = 3
+
+# このプロンプトは324トークン
+PROMPT_HANOI: str = f"""Solve Tower of Hanoi problem with {N_DISKS} disks.
+
+Rules:
 - There are 3 pegs: A, B, and C.
 - Disks are numbered from 1 (smallest) to {N_DISKS} (largest).
 - Initial state: all disks on peg A in order [{N_DISKS} ... 1], B and C are empty.
@@ -39,9 +43,9 @@ aux = B
 
 Output ONLY the trace, following the exact format and indentation rules above.
 ```
-CALL solve({N_DISKS}, A, C, B)"""
+"""
 
-def solve(n:int, fr:str, to:str, aux:str, ans:str) -> None:
+def solve(n:int, fr:str, to:str, aux:str, ans:str) -> str:
     tabs = '  ' * (N_DISKS - n)
     ans += f"{tabs}CALL solve({n},{fr},{to})\n"
     if n == 1:
@@ -53,7 +57,10 @@ def solve(n:int, fr:str, to:str, aux:str, ans:str) -> None:
     ans += f"{tabs}RETURN\n"
     return ans
 
+def get_answer() -> str:
+    return PROMPT_HANOI + solve(N_DISKS, "A", "C", "B", "")
+
 # test
 if __name__ == "__main__":
-    ans = solve(N_DISKS, "A", "C", "B", "")
+    ans = get_answer()
     print(ans)

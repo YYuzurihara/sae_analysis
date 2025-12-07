@@ -1,12 +1,11 @@
 import os
 from typing import Any
-import random
 import torch
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from sae_lens import SAE
 from huggingface_hub import login
-from prompt_hanoi import PROMPT_HANOI # pyright: ignore[reportUnusedImport]
+from prompt_hanoi import PROMPT_HANOI, get_answer # pyright: ignore[reportUnusedImport]
 import torch.nn.functional as F
 
 # Device setup
@@ -38,69 +37,78 @@ def load_model_and_sae(layer: int) -> tuple[HookedTransformer, SAE[Any]]:
     
     return model, sae
 
+def collect_active_features(
+    model: HookedTransformer,
+    sae: SAE[Any],
+    text: str,
+) -> tuple[torch.Tensor, list[torch.Tensor]]:
+    """
+    1回目の推論: 活性化した特徴量を収集する
+    Returns:
+        baseline_logits: 1回目の推論のlogits [1, pos, vocab_size]
+        collected_features: 各トークン位置で収集された特徴量のインデックスのリスト (リストの長さはseq_len)
+        diff: saeでの推論との差分
+    """
+    hook_name: str = sae.cfg.metadata.hook_name
+
+    # リストで扱うことで関数内部での変更がそのまま保存される
+    collected_features: list[torch.Tensor] = []
+    diff = []
+
+    def collection_hook(resid: torch.Tensor, hook: HookPoint) -> torch.Tensor:
+        with torch.no_grad():
+            features = sae.encode(resid)  # shape: [1, seq_len, enc_dim]
+            seq_len = features.shape[1]
+
+            for pos in range(seq_len):
+                pos_features = features[0, pos, :] # shape: [enc_dim]
+                indices = pos_features.nonzero(as_tuple=True)[0] # shape: [num_nonzero]
+                collected_features.append(indices.cpu())
+        diff.append(resid - sae.decode(features))
+        return resid
+
+    with model.hooks(fwd_hooks=[(hook_name, collection_hook)]):
+        baseline_logits, _ = model.run_with_cache([text], prepend_bos=True)
+
+    print(f"Collected {len(collected_features)} active features across all positions")
+    return baseline_logits, collected_features, diff[0]
+
 def inspect_logits(
     model: HookedTransformer, 
     sae: SAE[Any], 
-    text: str, 
-    target_ids: list[int], 
-    flag_steer: bool = True,
-    ans_labels: torch.Tensor|None = None
-) -> None:
-    """
-    3. llmのlogitを確認できるようにする
-       (And optionally projected SAE features)
-    """
-    def steering_hook(resid: torch.Tensor, hook: HookPoint) -> torch.Tensor:
-        # resid shape: [batch, pos, d_model]
-        steer_feature = sae.encode(resid)
-        diff = resid - sae.decode(steer_feature)
+    text: str,
+    pos:int,
+    feature_id: int,
+    diff: torch.Tensor
+) -> torch.Tensor:
 
-        nonzero_indices = (steer_feature[:, -1, :] != 0).nonzero(as_tuple=True)[1]  # get feature dim indices at last position
-        if len(nonzero_indices) > 0:
-            feature_idx = random.choice(nonzero_indices.tolist())
-            print(f"feature_idx: {feature_idx} is set to zero")
-            steer_feature[:, -1, feature_idx] = 0
-        resid = sae.decode(steer_feature) + diff
+    def ablation_hook(resid: torch.Tensor, hook: HookPoint) -> torch.Tensor:
+        # resid shape: [1, pos, d_model]
+        ablated_feature = sae.encode(resid) # shape: [1, pos, enc_dim]
+        
+        ablated_feature[0, pos, feature_id] = 0
+        ablated_feature = sae.decode(ablated_feature) # shape: [1, pos, d_model]
+        resid = ablated_feature + diff
         return resid
 
     print(f"\n--- Logit Inspection ---")
     hook_name:str = sae.cfg.metadata.hook_name
 
-    if flag_steer:
-        fwd_hooks = [
-            (hook_name, steering_hook),
-        ]
-    else:
-        fwd_hooks = []
+    fwd_hooks = [
+        (hook_name, ablation_hook),
+    ]
 
     with model.hooks(fwd_hooks=fwd_hooks):  # pyright: ignore[reportArgumentType]
+        print(f"Running model with cache")
         logits, _ = model.run_with_cache(text, prepend_bos=True)
     
-    # Logits shape: [batch, pos, vocab_size]
-    # Look at the last token's logits (prediction for next token)
-    last_token_logits = logits[..., -1, :] # type: ignore
+    return logits
 
-    if ans_labels is not None:
-        loss = F.cross_entropy(last_token_logits, ans_labels)
-        print(f"Loss: {loss.item()}")
-
-    if target_ids != []:
-        for target_id in target_ids:
-            target_logit = last_token_logits[:, target_id]
-            print(f"{model.to_string([target_id])}: {target_logit.item():.4f}")
-    
-    top_logits, top_indices = torch.topk(last_token_logits, k=10)
-    top_logits = top_logits.view(-1)
-    top_indices = top_indices.view(-1)
-    
-    print("\nModel Top Predictions (Next Token):")
-    for score, idx in zip(top_logits, top_indices):
-        token_str = model.to_string(idx)
-        print(f"  '{token_str}': {score.item():.4f}")
 
 if __name__ == "__main__":
     # Parameters
     TARGET_LAYER = 16 # 指定した層 (User can change this)
+    POS_TO_START = 332 # 推論を開始するトークン位置
     
     try:
         # モデルのロード
@@ -110,7 +118,27 @@ if __name__ == "__main__":
         # hook_names = list(model.hook_dict.keys())
         # print(f"Hook names: {hook_names}")
 
-        inspect_logits(model, sae, PROMPT_HANOI, target_ids=[], flag_steer=False)
+        text = get_answer()
+        tokens = model.to_str_tokens(text, prepend_bos=True)
+        token_ids = model.to_tokens(text, prepend_bos=True).tolist()[0]
+        # 最後のトークンは"\n"なので不要
+        text = ''.join(tokens[:-2])
+        # 正解のトークンid
+        target_ids = token_ids[1:-1]
+
+        # 1: 活性化した特徴量を収集する
+        baseline_logits, collected_features, diff = collect_active_features(model, sae, text)
+
+        # 2: 各特徴量をゼロにして推論を行う
+        for pos, feature_ids in enumerate(collected_features):
+            for feature_id in feature_ids:
+                logits = inspect_logits(model, sae, text, pos, feature_id.item(), diff)
+                print(f"Logits shape: {logits.shape}")
+
+                # logits[POS_TO_START]の保存
+                logits_to_save = logits[:, POS_TO_START:, :]
+                torch.save(logits_to_save, f"logits/logits_p{pos}_f{feature_id.item()}.pt")
+                print(f"Saved logits at position {pos} to logits/logits_p{pos}_f{feature_id.item()}.pt")
         
     except Exception as e:
         print(f"An error occurred: {e}")
