@@ -91,7 +91,6 @@ def inspect_logits(
         resid = ablated_feature + diff
         return resid
 
-    print(f"\n--- Logit Inspection ---")
     hook_name:str = sae.cfg.metadata.hook_name
 
     fwd_hooks = [
@@ -108,7 +107,7 @@ def inspect_logits(
 if __name__ == "__main__":
     # Parameters
     TARGET_LAYER = 16 # 指定した層 (User can change this)
-    POS_TO_START = 332 # 推論を開始するトークン位置
+    POS_TO_START = 331 # 推論を開始するトークン位置 -> 331番目のトークン予測から観察する
     
     try:
         # モデルのロード
@@ -129,13 +128,28 @@ if __name__ == "__main__":
         # 1: 活性化した特徴量を収集する
         baseline_logits, collected_features, diff = collect_active_features(model, sae, text)
 
+        # 特徴量を操作していないときのlogitsを保存
+        torch.save(baseline_logits[:, POS_TO_START:, :], f"logits/logits_baseline.pt")
+        print(f"Saved logits at position {POS_TO_START} to logits/logits_baseline.pt")
+
+        # for test
+        # test_logits = baseline_logits[0, POS_TO_START, :]
+        # top10_logits, top10_indices = torch.topk(test_logits, 10, dim=-1)
+        # print("Top-10 token IDs (wo target) at POS_TO_START:")
+        # for i in range(10):
+        #     token_id = top10_indices[i].item()
+        #     token_str = model.to_string([token_id]).strip()
+        #     logit = top10_logits[i].item()
+        #     print(f"{i+1}: token_id={token_id}, token='{token_str}', logit={logit:.3f}")
+
         # 2: 各特徴量をゼロにして推論を行う
         for pos, feature_ids in enumerate(collected_features):
+            print(f"Processing position {pos} with {len(feature_ids)} features")
             for feature_id in feature_ids:
                 logits = inspect_logits(model, sae, text, pos, feature_id.item(), diff)
                 print(f"Logits shape: {logits.shape}")
 
-                # logits[POS_TO_START]の保存
+                # logitsの保存
                 logits_to_save = logits[:, POS_TO_START:, :]
                 torch.save(logits_to_save, f"logits/logits_p{pos}_f{feature_id.item()}.pt")
                 print(f"Saved logits at position {pos} to logits/logits_p{pos}_f{feature_id.item()}.pt")

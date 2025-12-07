@@ -8,7 +8,7 @@ tokens = model.to_str_tokens(text, prepend_bos=True)
 print(f"length of tokens: {len(tokens)}")
 print(f"Tokens: {tokens[331:]}")
 
-print(''.join(tokens[331:]))
+print(''.join(tokens[:332]))
 
 # # token_ids = model.to_tokens(text, prepend_bos=True).tolist()
 # print(f"length of token_ids: {len(token_ids[0])}")
