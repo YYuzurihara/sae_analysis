@@ -208,3 +208,4 @@ __marimo__/
 
 # logits
 logits/
+analyze_logits.py

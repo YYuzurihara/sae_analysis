@@ -7,6 +7,8 @@ from sae_lens import SAE
 from huggingface_hub import login
 from prompt_hanoi import PROMPT_HANOI, get_answer # pyright: ignore[reportUnusedImport]
 import torch.nn.functional as F
+import json
+from tqdm import tqdm
 
 # Device setup
 if torch.cuda.is_available():
@@ -71,6 +73,7 @@ def collect_active_features(
         baseline_logits, _ = model.run_with_cache([text], prepend_bos=True)
 
     print(f"Collected {len(collected_features)} active features across all positions")
+    print(f"pos2 feature_ids: {collected_features[2]}")
     return baseline_logits, collected_features, diff[0]
 
 def inspect_logits(
@@ -103,11 +106,32 @@ def inspect_logits(
     
     return logits
 
+def analyze_logits(
+    logits: torch.Tensor, 
+    target_ids: list[int],
+    pos_to_start: int
+) -> list[dict[str, Any]]:
+    results = []
+
+    # logits: [0, seq_len, vocab_size], target_ids: [seq_len]
+    # logitsは推論すべき位置が0になっている
+    target_tensor = torch.tensor(target_ids, device=logits.device)
+
+    # loss: [seq_len], top_10_logits: [seq_len, 10]
+    loss = F.cross_entropy(logits[0,:,:], target_tensor, reduction="none")
+    for i in range(len(target_ids)):
+        results.append({
+            "loss": loss[i].item(),
+            "position": i + pos_to_start,
+            "target_id": target_ids[i]
+        })
+    return results
 
 if __name__ == "__main__":
     # Parameters
     TARGET_LAYER = 16 # 指定した層 (User can change this)
     POS_TO_START = 331 # 推論を開始するトークン位置 -> 331番目のトークン予測から観察する
+    CHECK_POINT = 398
     
     try:
         # モデルのロード
@@ -123,14 +147,14 @@ if __name__ == "__main__":
         # 最後のトークンは"\n"なので不要
         text = ''.join(tokens[:-2])
         # 正解のトークンid
-        target_ids = token_ids[1:-1]
+        target_ids = token_ids[POS_TO_START:-1]
 
         # 1: 活性化した特徴量を収集する
         baseline_logits, collected_features, diff = collect_active_features(model, sae, text)
 
         # 特徴量を操作していないときのlogitsを保存
-        torch.save(baseline_logits[:, POS_TO_START:, :], f"logits/logits_baseline.pt")
-        print(f"Saved logits at position {POS_TO_START} to logits/logits_baseline.pt")
+        torch.save(baseline_logits[:, POS_TO_START:, :], f"logits/baseline/logits_baseline.pt")
+        print(f"Saved logits at position {POS_TO_START} to logits/baseline/logits_baseline.pt")
 
         # for test
         # test_logits = baseline_logits[0, POS_TO_START, :]
@@ -142,18 +166,19 @@ if __name__ == "__main__":
         #     logit = top10_logits[i].item()
         #     print(f"{i+1}: token_id={token_id}, token='{token_str}', logit={logit:.3f}")
 
-        # 2: 各特徴量をゼロにして推論を行う
-        for pos, feature_ids in enumerate(collected_features):
-            print(f"Processing position {pos} with {len(feature_ids)} features")
-            for feature_id in feature_ids:
+        for pos, feature_ids in enumerate(tqdm(collected_features[CHECK_POINT:], desc="Positions"), start=CHECK_POINT):
+            tqdm_features = tqdm(feature_ids, desc=f"Features at pos {pos}", leave=False)
+            for feature_id in tqdm_features:
                 logits = inspect_logits(model, sae, text, pos, feature_id.item(), diff)
-                print(f"Logits shape: {logits.shape}")
+                # print(f"Logits shape: {logits.shape}")
 
                 # logitsの保存
                 logits_to_save = logits[:, POS_TO_START:, :]
-                torch.save(logits_to_save, f"logits/logits_p{pos}_f{feature_id.item()}.pt")
-                print(f"Saved logits at position {pos} to logits/logits_p{pos}_f{feature_id.item()}.pt")
-        
+                results = analyze_logits(logits_to_save, target_ids, POS_TO_START)
+                os.makedirs(f"logits/position{pos}", exist_ok=True)
+                with open(f"logits/position{pos}/logits_pruned_f{feature_id.item()}.json", "w", encoding="utf-8") as f:
+                    json.dump(results, f, indent=2, ensure_ascii=False)
+                tqdm_features.set_postfix_str(f"saved f{feature_id.item()}")
     except Exception as e:
         print(f"An error occurred: {e}")
         import traceback
