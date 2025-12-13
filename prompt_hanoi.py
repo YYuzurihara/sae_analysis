@@ -45,6 +45,9 @@ Output ONLY the trace, following the exact format and indentation rules above.
 ```
 """
 
+# 推論を開始するトークン位置
+POS_TO_START_SOLVE: int = 331
+
 def solve(n:int, fr:str, to:str, aux:str, ans:str) -> str:
     tabs = '  ' * (N_DISKS - n)
     ans += f"{tabs}CALL solve({n},{fr},{to})\n"

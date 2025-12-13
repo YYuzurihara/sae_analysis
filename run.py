@@ -73,7 +73,6 @@ def collect_active_features(
         baseline_logits, _ = model.run_with_cache([text], prepend_bos=True)
 
     print(f"Collected {len(collected_features)} active features across all positions")
-    print(f"pos2 feature_ids: {collected_features[2]}")
     return baseline_logits, collected_features, diff[0]
 
 def inspect_logits(
@@ -129,9 +128,9 @@ def analyze_logits(
 
 if __name__ == "__main__":
     # Parameters
-    TARGET_LAYER = 16 # 指定した層 (User can change this)
+    TARGET_LAYER = 24 # 指定した層 (User can change this)
     POS_TO_START = 331 # 推論を開始するトークン位置 -> 331番目のトークン予測から観察する
-    CHECK_POINT = 398
+    CHECK_POINT = 301
     
     try:
         # モデルのロード
