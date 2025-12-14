@@ -5,7 +5,7 @@ from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from sae_lens import SAE
 from huggingface_hub import login
-from prompt_hanoi import PROMPT_HANOI, get_answer # pyright: ignore[reportUnusedImport]
+from prompt_hanoi import get_answer, POS_TO_START_SOLVE # pyright: ignore[reportUnusedImport]
 import torch.nn.functional as F
 import json
 from tqdm import tqdm
@@ -129,8 +129,10 @@ def analyze_logits(
 if __name__ == "__main__":
     # Parameters
     TARGET_LAYER = 24 # 指定した層 (User can change this)
-    POS_TO_START = 331 # 推論を開始するトークン位置 -> 331番目のトークン予測から観察する
     CHECK_POINT = 301
+
+    os.makedirs("logits", exist_ok=True)
+    os.makedirs("logits/baseline", exist_ok=True)
     
     try:
         # モデルのロード
@@ -146,19 +148,19 @@ if __name__ == "__main__":
         # 最後のトークンは"\n"なので不要
         text = ''.join(tokens[:-2])
         # 正解のトークンid
-        target_ids = token_ids[POS_TO_START:-1]
+        target_ids = token_ids[POS_TO_START_SOLVE:-1]
 
         # 1: 活性化した特徴量を収集する
         baseline_logits, collected_features, diff = collect_active_features(model, sae, text)
 
         # 特徴量を操作していないときのlogitsを保存
-        torch.save(baseline_logits[:, POS_TO_START:, :], f"logits/baseline/logits_baseline.pt")
-        print(f"Saved logits at position {POS_TO_START} to logits/baseline/logits_baseline.pt")
+        torch.save(baseline_logits[:, POS_TO_START_SOLVE:, :], f"logits/baseline/logits_baseline.pt")
+        print(f"Saved baseline logits to logits/baseline/logits_baseline.pt")
 
         # for test
-        # test_logits = baseline_logits[0, POS_TO_START, :]
+        # test_logits = baseline_logits[0, POS_TO_START_SOLVE, :]
         # top10_logits, top10_indices = torch.topk(test_logits, 10, dim=-1)
-        # print("Top-10 token IDs (wo target) at POS_TO_START:")
+        # print("Top-10 token IDs (wo target) at POS_TO_START_SOLVE:")
         # for i in range(10):
         #     token_id = top10_indices[i].item()
         #     token_str = model.to_string([token_id]).strip()
@@ -172,8 +174,8 @@ if __name__ == "__main__":
                 # print(f"Logits shape: {logits.shape}")
 
                 # logitsの保存
-                logits_to_save = logits[:, POS_TO_START:, :]
-                results = analyze_logits(logits_to_save, target_ids, POS_TO_START)
+                logits_to_save = logits[:, POS_TO_START_SOLVE:, :]
+                results = analyze_logits(logits_to_save, target_ids, POS_TO_START_SOLVE)
                 os.makedirs(f"logits/position{pos}", exist_ok=True)
                 with open(f"logits/position{pos}/logits_pruned_f{feature_id.item()}.json", "w", encoding="utf-8") as f:
                     json.dump(results, f, indent=2, ensure_ascii=False)

@@ -31,7 +31,7 @@ def solve(n, from, to, aux):
 
 Example for the base case (n=1):
 CALL solve(1, A, C, B)
-  move 1 A C
+    move 1 A C
 RETURN
 
 Your task:
@@ -49,13 +49,13 @@ Output ONLY the trace, following the exact format and indentation rules above.
 POS_TO_START_SOLVE: int = 331
 
 def solve(n:int, fr:str, to:str, aux:str, ans:str) -> str:
-    tabs = '  ' * (N_DISKS - n)
+    tabs = '\t' * (N_DISKS - n)
     ans += f"{tabs}CALL solve({n},{fr},{to})\n"
     if n == 1:
-        ans += f"{tabs}  move {n} {fr} {to}\n"
+        ans += f"{tabs}\tmove {n} {fr} {to}\n"
     else:
         ans = solve(n-1, fr, aux, to, ans)
-        ans += f"{tabs}  move {n} {fr} {to}\n"
+        ans += f"{tabs}\tmove {n} {fr} {to}\n"
         ans = solve(n-1, aux, to, fr, ans)
     ans += f"{tabs}RETURN\n"
     return ans
