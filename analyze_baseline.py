@@ -6,15 +6,17 @@ from prompt_hanoi import get_answer, POS_TO_START_SOLVE
 from transformer_lens import HookedTransformer
 import json
 import os
+import dotenv
 
-
+dotenv.load_dotenv()
 if torch.cuda.is_available():
     device = "cuda"
 else:
     device = "cpu"
 
 # baselineのlogitsを読み込む(1, n, vocab_size)
-baseline_logits = torch.load("logits/baseline/logits_baseline.pt").to(device)
+data_dir = os.getenv("DATA_DIR")
+baseline_logits = torch.load(os.path.join(data_dir, "logits_L16/baseline/logits_baseline.pt")).to(device)
 
 # modelを読み込む
 model = HookedTransformer.from_pretrained("meta-llama/Llama-3.1-8B", device=device)
