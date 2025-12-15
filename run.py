@@ -7,7 +7,6 @@ from sae_lens import SAE
 from huggingface_hub import login
 from prompt_hanoi import get_answer, POS_TO_START_SOLVE # pyright: ignore[reportUnusedImport]
 import torch.nn.functional as F
-import json
 from tqdm import tqdm
 
 # Device setup
@@ -45,7 +44,7 @@ def collect_active_features(
     text: str,
 ) -> tuple[torch.Tensor, list[torch.Tensor]]:
     """
-    1回目の推論: 活性化した特徴量を収集する
+    活性化した特徴量を収集する
     Returns:
         baseline_logits: 1回目の推論のlogits [1, pos, vocab_size]
         collected_features: 各トークン位置で収集された特徴量のインデックスのリスト (リストの長さはseq_len)
@@ -100,87 +99,75 @@ def inspect_logits(
     ]
 
     with model.hooks(fwd_hooks=fwd_hooks):  # pyright: ignore[reportArgumentType]
-        print(f"Running model with cache")
         logits, _ = model.run_with_cache(text, prepend_bos=True)
     
     return logits
 
-def analyze_logits(
+def get_ce_loss(
     logits: torch.Tensor, 
     target_ids: list[int],
-    pos_to_start: int
-) -> list[dict[str, Any]]:
-    results = []
+) -> torch.Tensor:
 
     # logits: [0, seq_len, vocab_size], target_ids: [seq_len]
-    # logitsは推論すべき位置が0になっている
+    # logitsは推論すべき位置の特徴量が0になっている
     target_tensor = torch.tensor(target_ids, device=logits.device)
 
     # loss: [seq_len], top_10_logits: [seq_len, 10]
     loss = F.cross_entropy(logits[0,:,:], target_tensor, reduction="none")
-    for i in range(len(target_ids)):
-        results.append({
-            "loss": loss[i].item(),
-            "position": i + pos_to_start,
-            "target_id": target_ids[i]
-        })
-    return results
+    return loss
 
 if __name__ == "__main__":
     # Parameters
-    TARGET_LAYER = 24 # 指定した層 (User can change this)
-    CHECK_POINT = 301
+    TARGET_LAYER = 8 # 指定した層 (User can change this)
+    CHECK_POINT = 2 # 特徴量を収集する位置 (User can change this)
 
-    os.makedirs("logits", exist_ok=True)
-    os.makedirs("logits/baseline", exist_ok=True)
-    
-    try:
-        # モデルのロード
-        model, sae = load_model_and_sae(layer=TARGET_LAYER)
+    data_dir = os.getenv("DATA_DIR")
+    os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
+    os.makedirs(f"{data_dir}/L{TARGET_LAYER}/baseline", exist_ok=True)
 
-        # フックの名前を確認
-        # hook_names = list(model.hook_dict.keys())
-        # print(f"Hook names: {hook_names}")
+    # モデルのロード
+    model, sae = load_model_and_sae(layer=TARGET_LAYER)
 
-        text = get_answer()
-        tokens = model.to_str_tokens(text, prepend_bos=True)
-        token_ids = model.to_tokens(text, prepend_bos=True).tolist()[0]
-        # 最後のトークンは"\n"なので不要
-        text = ''.join(tokens[:-2])
-        # 正解のトークンid
-        target_ids = token_ids[POS_TO_START_SOLVE:-1]
+    # フックの名前を確認
+    # hook_names = list(model.hook_dict.keys())
+    # print(f"Hook names: {hook_names}")
 
-        # 1: 活性化した特徴量を収集する
-        baseline_logits, collected_features, diff = collect_active_features(model, sae, text)
+    text = get_answer()
+    tokens = model.to_str_tokens(text, prepend_bos=True)
+    token_ids = model.to_tokens(text, prepend_bos=True).tolist()[0]
+    # 最後のトークンは"\n"なので不要
+    text = ''.join(tokens[:-2])
+    # 正解のトークンid
+    target_ids = token_ids[POS_TO_START_SOLVE:-1]
 
-        # 特徴量を操作していないときのlogitsを保存
-        torch.save(baseline_logits[:, POS_TO_START_SOLVE:, :], f"logits/baseline/logits_baseline.pt")
-        print(f"Saved baseline logits to logits/baseline/logits_baseline.pt")
+    # 活性化した特徴量を収集する
+    baseline_logits, collected_features, diff = collect_active_features(model, sae, text)
 
-        # for test
-        # test_logits = baseline_logits[0, POS_TO_START_SOLVE, :]
-        # top10_logits, top10_indices = torch.topk(test_logits, 10, dim=-1)
-        # print("Top-10 token IDs (wo target) at POS_TO_START_SOLVE:")
-        # for i in range(10):
-        #     token_id = top10_indices[i].item()
-        #     token_str = model.to_string([token_id]).strip()
-        #     logit = top10_logits[i].item()
-        #     print(f"{i+1}: token_id={token_id}, token='{token_str}', logit={logit:.3f}")
+    # 特徴量を操作していないときのloss, diffを保存
+    ce_loss = get_ce_loss(baseline_logits[:, POS_TO_START_SOLVE:, :], target_ids)
+    # diff: [1, seq_len, hidden_dim]
+    reconstruction_loss = diff.norm(p=2, dim=2).mean()
+    torch.save(reconstruction_loss, f"{data_dir}/L{TARGET_LAYER}/baseline/reconstruction_loss.pt")
+    torch.save(ce_loss, f"{data_dir}/L{TARGET_LAYER}/baseline/ce_loss.pt")
+    print(f"Saved baseline ce_loss and reconstruction_loss")
 
-        for pos, feature_ids in enumerate(tqdm(collected_features[CHECK_POINT:], desc="Positions"), start=CHECK_POINT):
-            tqdm_features = tqdm(feature_ids, desc=f"Features at pos {pos}", leave=False)
-            for feature_id in tqdm_features:
-                logits = inspect_logits(model, sae, text, pos, feature_id.item(), diff)
-                # print(f"Logits shape: {logits.shape}")
+    # for test
+    # test_logits = baseline_logits[0, POS_TO_START_SOLVE, :]
+    # top10_logits, top10_indices = torch.topk(test_logits, 10, dim=-1)
+    # print("Top-10 token IDs (wo target) at POS_TO_START_SOLVE:")
+    # for i in range(10):
+    #     token_id = top10_indices[i].item()
+    #     token_str = model.to_string([token_id]).strip()
+    #     logit = top10_logits[i].item()
+    #     print(f"{i+1}: token_id={token_id}, token='{token_str}', logit={logit:.3f}")
 
-                # logitsの保存
-                logits_to_save = logits[:, POS_TO_START_SOLVE:, :]
-                results = analyze_logits(logits_to_save, target_ids, POS_TO_START_SOLVE)
-                os.makedirs(f"logits/position{pos}", exist_ok=True)
-                with open(f"logits/position{pos}/logits_pruned_f{feature_id.item()}.json", "w", encoding="utf-8") as f:
-                    json.dump(results, f, indent=2, ensure_ascii=False)
-                tqdm_features.set_postfix_str(f"saved f{feature_id.item()}")
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        import traceback
-        traceback.print_exc()
+    for pos, feature_ids in enumerate(tqdm(collected_features[CHECK_POINT:], desc="Positions"), start=CHECK_POINT):
+        os.makedirs(f"{data_dir}/L{TARGET_LAYER}/position{pos}", exist_ok=True)
+        for feature_id in feature_ids:
+            logits = inspect_logits(model, sae, text, pos, feature_id.item(), diff)
+            # print(f"Logits shape: {logits.shape}")
+
+            # loss
+            logits_to_save = logits[:, POS_TO_START_SOLVE:, :]
+            loss = get_ce_loss(logits_to_save, target_ids)
+            torch.save(loss, f"{data_dir}/L{TARGET_LAYER}/position{pos}/feature{feature_id.item()}.pt")
