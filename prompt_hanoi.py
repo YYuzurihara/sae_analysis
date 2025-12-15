@@ -13,25 +13,25 @@ Rules:
 
 Output format (strict):
 - Show every recursive call explicitly using:
-    CALL solve(n, from, to, aux)
-    RETURN
+  CALL solve(n, from, to, aux)
+  RETURN
 - Inside the trace, show every actual move operation using:
-    move <disk> <from> <to>
+  move <disk> <from> <to>
 - Maintain proper indentation to reflect the recursion depth.
 - Do NOT include any commentary or explanation outside of the trace.
 
 Psudocode:
 def solve(n, from, to, aux):
-    if n == 1:
-        move 1 from to
-    else:
-        solve(n-1, from, aux, to)
-        move n from to
-        solve(n-1, aux, to, from)
+  if n == 1:
+    move 1 from to
+  else:
+    solve(n-1, from, aux, to)
+    move n from to
+    solve(n-1, aux, to, from)
 
 Example for the base case (n=1):
 CALL solve(1, A, C, B)
-    move 1 A C
+  move 1 A C
 RETURN
 
 Your task:
