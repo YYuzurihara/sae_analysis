@@ -5,10 +5,13 @@ from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from sae_lens import SAE
 from huggingface_hub import login
+from transformers.generation.continuous_batching.continuous_api import ContinuousBatchingManager
 from prompt_hanoi import get_answer, POS_TO_START_SOLVE # pyright: ignore[reportUnusedImport]
 import torch.nn.functional as F
 from tqdm import tqdm
 from dotenv import load_dotenv
+
+load_dotenv()
 
 # Device setup
 if torch.cuda.is_available():
@@ -18,9 +21,8 @@ else:
 
 token = os.getenv("hf_token")
 login(token=token)
-print(f"Using device: {device}")
 
-load_dotenv()
+print(f"Using device: {device}")
 
 def load_model_and_sae(layer: int) -> tuple[HookedTransformer, SAE[Any]]:
     print("Loading Model...")
@@ -81,16 +83,23 @@ def inspect_logits(
     sae: SAE[Any], 
     text: str,
     pos:int,
-    feature_id: int,
+    feature_ids: torch.Tensor,
     diff: torch.Tensor
 ) -> torch.Tensor:
 
+    # Normalize feature ids to 1D tensor so we can run a batch where each
+    # element ablates a potentially different feature at the same position.
+    batch_size = feature_ids.numel()
+    prompts = [text] * batch_size
+
     def ablation_hook(resid: torch.Tensor, hook: HookPoint) -> torch.Tensor:
-        # resid shape: [1, pos, d_model]
-        ablated_feature = sae.encode(resid) # shape: [1, pos, enc_dim]
-        
-        ablated_feature[0, pos, feature_id] = 0
-        ablated_feature = sae.decode(ablated_feature) # shape: [1, pos, d_model]
+        # resid shape: [batch, pos, d_model]
+        ablated_feature = sae.encode(resid) # shape: [batch, pos, enc_dim]
+
+        batch_indices = torch.arange(resid.shape[0], device=resid.device)
+        ablated_feature[batch_indices, pos, feature_ids.to(resid.device)] = 0
+
+        ablated_feature = sae.decode(ablated_feature) # shape: [batch, pos, d_model]
         resid = ablated_feature + diff
         return resid
 
@@ -101,7 +110,7 @@ def inspect_logits(
     ]
 
     with model.hooks(fwd_hooks=fwd_hooks):  # pyright: ignore[reportArgumentType]
-        logits, _ = model.run_with_cache(text, prepend_bos=True)
+        logits, _ = model.run_with_cache(prompts, return_cache_object=False, prepend_bos=True)
     
     return logits
 
@@ -110,18 +119,20 @@ def get_ce_loss(
     target_ids: list[int],
 ) -> torch.Tensor:
 
-    # logits: [0, seq_len, vocab_size], target_ids: [seq_len]
-    # logitsは推論すべき位置の特徴量が0になっている
-    target_tensor = torch.tensor(target_ids, device=logits.device)
+    # logits: [batch, seq_len, vocab_size] -> [batch, vocab_size, seq_len]に変換
+    logits = logits.transpose(1, 2) # shape: [batch, vocab_size, seq_len]
 
-    # loss: [seq_len], top_10_logits: [seq_len, 10]
-    loss = F.cross_entropy(logits[0,:,:], target_tensor, reduction="none")
+    target_tensor = torch.tensor(target_ids, device=logits.device) # shape: [seq_len]
+    target_tensor = target_tensor.repeat(logits.shape[0], 1) # shape: [batch, seq_len]
+
+    loss = F.cross_entropy(logits, target_tensor, reduction="none") # shape: [batch, seq_len]
     return loss
 
 if __name__ == "__main__":
     # Parameters
-    TARGET_LAYER = 8 # 指定した層 (User can change this)
-    CHECK_POINT = 2 # 特徴量を収集する位置 (User can change this)
+    TARGET_LAYER = 8 # 指定した層
+    CHECK_POINT = 2 # 特徴量を収集する位置
+    BATCH_SIZE = 4 # バッチサイズ
 
     data_dir = os.getenv("DATA_DIR")
     os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
@@ -147,29 +158,25 @@ if __name__ == "__main__":
 
     # 特徴量を操作していないときのloss, diffを保存
     ce_loss = get_ce_loss(baseline_logits[:, POS_TO_START_SOLVE:, :], target_ids)
-    # diff: [1, seq_len, hidden_dim]
+    # diff: [batch, seq_len, hidden_dim]
     reconstruction_loss = diff.norm(p=2, dim=2).mean()
     torch.save(reconstruction_loss, f"{data_dir}/L{TARGET_LAYER}/baseline/reconstruction_loss.pt")
     torch.save(ce_loss, f"{data_dir}/L{TARGET_LAYER}/baseline/ce_loss.pt")
     print(f"Saved baseline ce_loss and reconstruction_loss")
 
-    # for test
-    # test_logits = baseline_logits[0, POS_TO_START_SOLVE, :]
-    # top10_logits, top10_indices = torch.topk(test_logits, 10, dim=-1)
-    # print("Top-10 token IDs (wo target) at POS_TO_START_SOLVE:")
-    # for i in range(10):
-    #     token_id = top10_indices[i].item()
-    #     token_str = model.to_string([token_id]).strip()
-    #     logit = top10_logits[i].item()
-    #     print(f"{i+1}: token_id={token_id}, token='{token_str}', logit={logit:.3f}")
-
     for pos, feature_ids in enumerate(tqdm(collected_features[CHECK_POINT:], desc="Positions"), start=CHECK_POINT):
         os.makedirs(f"{data_dir}/L{TARGET_LAYER}/position{pos}", exist_ok=True)
-        for feature_id in feature_ids:
-            logits = inspect_logits(model, sae, text, pos, feature_id.item(), diff)
+        batch_feature_ids_tuple = torch.split(feature_ids, BATCH_SIZE) # batch分のタプルに分割
+
+        for batch_feature_ids in batch_feature_ids_tuple:
+            logits = inspect_logits(model, sae, text, pos, batch_feature_ids, diff)
             # print(f"Logits shape: {logits.shape}")
 
             # loss
             logits_to_save = logits[:, POS_TO_START_SOLVE:, :]
             loss = get_ce_loss(logits_to_save, target_ids)
-            torch.save(loss, f"{data_dir}/L{TARGET_LAYER}/position{pos}/feature{feature_id.item()}.pt")
+            for i, feature_id in enumerate(batch_feature_ids):
+                torch.save(loss[i], f"{data_dir}/L{TARGET_LAYER}/position{pos}/feature{feature_id.item()}.pt")
+            
+            del logits, logits_to_save, loss
+            torch.cuda.empty_cache()
