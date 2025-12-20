@@ -118,6 +118,7 @@ def run_batch(
     start_time = time.time()
     base_ce_loss, collections = collect(model, sae, input_ids)
     end_time = time.time()
+    base_ce_loss = base_ce_loss.cpu()
     torch.save(base_ce_loss, f"{data_dir}/L{TARGET_LAYER}/base_ce_loss.pt")
     print(f"run_batch: collecting diff took {end_time - start_time} sec, loss: {base_ce_loss.mean().item()}")
 
@@ -125,7 +126,7 @@ def run_batch(
     diff, act_pos_ids, act_feat_ids = collections
 
     # collect reconstruction loss
-    reconstruction_loss = (diff[:, 1:, :]**2).sum(dim=-1) # BOSトークンは無視して4096個を足していることに注意
+    reconstruction_loss = (diff[:, 1:, :]**2).sum(dim=-1).cpu() # BOSトークンは無視して4096個を足していることに注意
     print(f"reconstruction_loss: {reconstruction_loss.mean().item()}")
     torch.save(reconstruction_loss, f"{data_dir}/L{TARGET_LAYER}/reconstruction_loss.pt")
 
@@ -150,6 +151,7 @@ def run_batch(
                 )
             ]
         )
+        # 推論しない部分のロスを捨ててから保存
         ce_loss = torch.cat([ids, ce_loss[:, POS_TO_START_SOLVE:]], dim=1).cpu() # (b, 2), (b, 1) -> (b, 3)
         torch.save(ce_loss, f"{data_dir}/L{TARGET_LAYER}/ce_loss_batch{i}.pt")
     return
