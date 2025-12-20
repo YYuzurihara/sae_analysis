@@ -125,8 +125,8 @@ def run_batch(
     diff, act_pos_ids, act_feat_ids = collections
 
     # collect reconstruction loss
-    reconstruction_loss = (diff[:, 1:, :]**2).sum(dim=-1) # BOSトークンは無視する
-    print(f"reconstruction_loss: {reconstruction_loss}")
+    reconstruction_loss = (diff[:, 1:, :]**2).sum(dim=-1) # BOSトークンは無視して4096個を足していることに注意
+    print(f"reconstruction_loss: {reconstruction_loss.mean().item()}")
     torch.save(reconstruction_loss, f"{data_dir}/L{TARGET_LAYER}/reconstruction_loss.pt")
 
     act_pos_ids = act_pos_ids[pos_start_abl:]
