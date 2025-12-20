@@ -29,6 +29,13 @@ def load_model_and_sae(layer: int):
         sae_id=f"l{layer}r_32x",
         device=device
     )
+
+    print("=============debug================")
+    print(f"normalize_activations: {sae.cfg.normalize_activations}")
+    print(f"dtype: {sae.cfg.dtype}")
+    print(f"W_enc norm: {sae.W_enc.norm().item()}")
+    print(f"W_dec norm: {sae.W_dec.norm().item()}")
+    print("=================================")
     return model, sae
 
 def collection_hook(
@@ -111,10 +118,17 @@ def run_batch(
     start_time = time.time()
     base_ce_loss, collections = collect(model, sae, input_ids)
     end_time = time.time()
-    print(f"run_batch: collecting diff took {end_time - start_time} sec")
+    torch.save(base_ce_loss, f"{data_dir}/L{TARGET_LAYER}/base_ce_loss.pt")
+    print(f"run_batch: collecting diff took {end_time - start_time} sec, loss: {base_ce_loss.mean().item()}")
 
     # split collections into diff, act_pos_ids, act_feat_ids
     diff, act_pos_ids, act_feat_ids = collections
+
+    # collect reconstruction loss
+    reconstruction_loss = (diff[:, 1:, :]**2).sum(dim=-1) # BOSトークンは無視する
+    print(f"reconstruction_loss: {reconstruction_loss}")
+    torch.save(reconstruction_loss, f"{data_dir}/L{TARGET_LAYER}/reconstruction_loss.pt")
+
     act_pos_ids = act_pos_ids[pos_start_abl:]
     act_feat_ids = act_feat_ids[pos_start_abl:]
     act_ids = torch.stack([act_pos_ids, act_feat_ids], dim=1) # (b, 2)
@@ -124,8 +138,7 @@ def run_batch(
     
     # ablation
     batch_inputs = input_ids.repeat(batch_size, 1)
-    ce_losses = []
-    for ids in tqdm(batches):
+    for i,ids in tqdm(enumerate(batches)):
         ce_loss = model.run_with_hooks(
             batch_inputs[:ids.shape[0], :], # 指定したバッチサイズを超えないように末尾をスライス
             return_type="loss",
@@ -138,13 +151,15 @@ def run_batch(
             ]
         )
         ce_loss = torch.cat([ids, ce_loss[:, POS_TO_START_SOLVE:]], dim=1).cpu() # (b, 2), (b, 1) -> (b, 3)
-        ce_losses.append(ce_loss)
-
-    ce_losses = torch.cat(ce_losses, dim=0)
-    return base_ce_loss, ce_losses
+        torch.save(ce_loss, f"{data_dir}/L{TARGET_LAYER}/ce_loss_batch{i}.pt")
+    return
 
 if __name__ == "__main__":
-    model, sae = load_model_and_sae(layer=16)
+    TARGET_LAYER = 16
+
+    os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
+
+    model, sae = load_model_and_sae(layer=TARGET_LAYER)
     print("loaded model and sae")
     text = get_answer()
-    base_ce_loss, ce_losses = run_batch(model, sae, text, batch_size=128, pos_start_abl=2)
+    run_batch(model, sae, text, batch_size=128, pos_start_abl=2)
