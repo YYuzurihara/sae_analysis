@@ -1,6 +1,5 @@
 N_DISKS: int = 3
 
-# このプロンプトは324トークン
 PROMPT_HANOI: str = f"""Solve Tower of Hanoi problem with {N_DISKS} disks.
 
 Rules:

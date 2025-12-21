@@ -16,4 +16,4 @@ print(''.join(tokens[POS_TO_START_SOLVE:]), end="\n\n")
 
 # # token_ids = model.to_tokens(text, prepend_bos=True).tolist()
 # print(f"length of token_ids: {len(token_ids[0])}")
-# print(f"Token IDs: {token_ids[0][331:]}")
+# print(f"Token IDs: {token_ids[0][:POS_TO_START_SOLVE]}")
