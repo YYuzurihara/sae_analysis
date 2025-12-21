@@ -88,6 +88,7 @@ def collect(
 ) -> torch.Tensor:
     collections = []
     
+    # 一番最後のトークンから予測されるトークンには答えがないので長さが1短くなる
     base_ce_loss = model.run_with_hooks(
         tokens,
         return_type="loss",
@@ -96,7 +97,7 @@ def collect(
             (sae.cfg.metadata.hook_name, partial(collection_hook, encode=sae.encode, decode=sae.decode, collections=collections))
         ]
     )
-    return base_ce_loss[:, POS_TO_START_SOLVE:], collections
+    return base_ce_loss[:, POS_TO_START_SOLVE-1:], collections
 
 @torch.no_grad()
 def run_batch(
@@ -111,14 +112,14 @@ def run_batch(
     model.eval()
 
     # tokenize
-    input_ids = model.to_tokens(text)[:, :-1] # (1, n)
+    input_ids = model.to_tokens(text, prepend_bos=True)[:, :-1] # (1, n)
 
     # collect diff
     print("run_batch: collecting diff")
     start_time = time.time()
     base_ce_loss, collections = collect(model, sae, input_ids)
     end_time = time.time()
-    base_ce_loss = base_ce_loss.cpu()
+    base_ce_loss = base_ce_loss.cpu() # [1, seq_len]
     torch.save(base_ce_loss, f"{data_dir}/L{TARGET_LAYER}/base_ce_loss.pt")
     print(f"run_batch: collecting diff took {end_time - start_time} sec, loss: {base_ce_loss.mean().item()}")
 
@@ -132,16 +133,17 @@ def run_batch(
 
     act_pos_ids = act_pos_ids[pos_start_abl:]
     act_feat_ids = act_feat_ids[pos_start_abl:]
-    act_ids = torch.stack([act_pos_ids, act_feat_ids], dim=1) # (b, 2)
+    act_ids = torch.stack([act_pos_ids, act_feat_ids], dim=1) # (B, 2)
 
     # split activated feature ids into batch_size groups
-    batches = act_ids.split(batch_size)
+    batches = act_ids.split(batch_size) # [b, 2] * num_batches
     
     # ablation
-    batch_inputs = input_ids.repeat(batch_size, 1)
+    batch_inputs = input_ids.repeat(batch_size, 1) # [b, seq_len]
     for i,ids in enumerate(tqdm(batches)):
+        # ce_loss: [b, seq_len]
         ce_loss = model.run_with_hooks(
-            batch_inputs[:ids.shape[0], :], # 指定したバッチサイズを超えないように末尾をスライス
+            batch_inputs[:ids.shape[0], :], # splitしたバッチのサイズを超えないように末尾をスライス
             return_type="loss",
             loss_per_token=True,
             fwd_hooks=[
@@ -151,13 +153,16 @@ def run_batch(
                 )
             ]
         )
+        ce_loss = ce_loss[:, POS_TO_START_SOLVE-1:].unsqueeze(-1) # [b, seq_len] -> [b, seq_len, 1]
+        _ids = ids.unsqueeze(1).repeat(1, ce_loss.shape[1], 1) # [b, 2] -> [b, 1, 2] -> [b, seq_len, 2]
+
         # 推論しない部分のロスを捨ててから保存
-        ce_loss = torch.cat([ids, ce_loss[:, POS_TO_START_SOLVE:]], dim=1).cpu() # (b, 2), (b, 1) -> (b, 3)
+        ce_loss = torch.cat([_ids, ce_loss], dim=-1).cpu()
         torch.save(ce_loss, f"{data_dir}/L{TARGET_LAYER}/ce_loss_batch{i}.pt")
     return
 
 if __name__ == "__main__":
-    TARGET_LAYER = 24
+    TARGET_LAYER = 16
 
     os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
 
