@@ -209,3 +209,4 @@ __marimo__/
 # logits
 logits/
 analyze_logits.py
+test_analyze.py

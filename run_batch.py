@@ -139,7 +139,7 @@ def run_batch(
     
     # ablation
     batch_inputs = input_ids.repeat(batch_size, 1)
-    for i,ids in tqdm(enumerate(batches)):
+    for i,ids in enumerate(tqdm(batches)):
         ce_loss = model.run_with_hooks(
             batch_inputs[:ids.shape[0], :], # 指定したバッチサイズを超えないように末尾をスライス
             return_type="loss",
@@ -157,7 +157,7 @@ def run_batch(
     return
 
 if __name__ == "__main__":
-    TARGET_LAYER = 16
+    TARGET_LAYER = 24
 
     os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
 
