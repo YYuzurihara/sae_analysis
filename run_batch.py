@@ -131,9 +131,8 @@ def run_batch(
     print(f"reconstruction_loss: {reconstruction_loss.mean().item()}")
     torch.save(reconstruction_loss, f"{data_dir}/L{TARGET_LAYER}/reconstruction_loss.pt")
 
-    act_pos_ids = act_pos_ids[pos_start_abl:]
-    act_feat_ids = act_feat_ids[pos_start_abl:]
     act_ids = torch.stack([act_pos_ids, act_feat_ids], dim=1) # (B, 2)
+    act_ids = act_ids[act_ids[:, 0] >= pos_start_abl]
 
     # split activated feature ids into batch_size groups
     batches = act_ids.split(batch_size) # [b, 2] * num_batches
@@ -162,7 +161,7 @@ def run_batch(
     return
 
 if __name__ == "__main__":
-    TARGET_LAYER = 24
+    TARGET_LAYER = 16
 
     os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
 
