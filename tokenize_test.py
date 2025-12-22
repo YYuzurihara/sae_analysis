@@ -1,7 +1,8 @@
 from transformer_lens import HookedTransformer
 from prompt_hanoi import get_answer, POS_TO_START_SOLVE
+import torch
 
-model = HookedTransformer.from_pretrained("meta-llama/Llama-3.1-8B", device="cpu")
+model = HookedTransformer.from_pretrained("meta-llama/Llama-3.1-8B", device="cpu", dtype=torch.bfloat16)
 
 text = get_answer()
 tokens = model.to_str_tokens(text, prepend_bos=True)
