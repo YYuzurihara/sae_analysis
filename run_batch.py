@@ -162,7 +162,7 @@ def run_batch(
     return
 
 if __name__ == "__main__":
-    TARGET_LAYER = 16
+    TARGET_LAYER = 24
 
     os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
 
