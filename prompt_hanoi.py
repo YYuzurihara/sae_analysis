@@ -1,11 +1,15 @@
+from typing import Callable
+from functools import partial
+
 N_DISKS: int = 3
 
-PROMPT_HANOI: str = f"""Solve Tower of Hanoi problem with {N_DISKS} disks.
+def prompt_hanoi(n: int) -> str:
+  return f"""Solve Tower of Hanoi problem with {n} disks.
 
 Rules:
 - There are 3 pegs: A, B, and C.
-- Disks are numbered from 1 (smallest) to {N_DISKS} (largest).
-- Initial state: all disks on peg A in order [{N_DISKS} ... 1], B and C are empty.
+- Disks are numbered from 1 (smallest) to {n} (largest).
+- Initial state: all disks on peg A in order [{n} ... 1], B and C are empty.
 - The goal is to move all disks to peg C.
 - Only the top disk of a peg can be moved.
 - A larger disk can never be placed on top of a smaller one.
@@ -35,7 +39,7 @@ RETURN
 
 Your task:
 Generate the full recursive trace to solve Tower of Hanoi with:
-N = {N_DISKS}
+N = {n}
 from = A
 to = C
 aux = B
@@ -47,22 +51,24 @@ Output ONLY the trace, following the exact format and indentation rules above.
 # 推論を開始するトークン位置
 POS_TO_START_SOLVE: int = 331
 
-def solve(n:int, fr:str, to:str, aux:str, ans:str) -> str:
-    tabs = '  ' * (N_DISKS - n)
-    ans += f"{tabs}CALL solve({n},{fr},{to})\n"
-    if n == 1:
-        ans += f"{tabs}  move {n} {fr} {to}\n"
-    else:
-        ans = solve(n-1, fr, aux, to, ans)
-        ans += f"{tabs}  move {n} {fr} {to}\n"
-        ans = solve(n-1, aux, to, fr, ans)
-    ans += f"{tabs}RETURN\n"
-    return ans
+def solve(n:int, fr:str, to:str, aux:str, ans:str, total_disks:int) -> str:
+  tabs = '  ' * (total_disks - n)
+  ans += f"{tabs}CALL solve({n},{fr},{to})\n"
+  if n == 1:
+    ans += f"{tabs}  move {n} {fr} {to}\n"
+  else:
+    ans = solve(n-1, fr, aux, to, ans, total_disks)
+    ans += f"{tabs}  move {n} {fr} {to}\n"
+    ans = solve(n-1, aux, to, fr, ans, total_disks)
+  ans += f"{tabs}RETURN\n"
+  return ans
 
-def get_answer() -> str:
-    return PROMPT_HANOI + solve(N_DISKS, "A", "C", "B", "")
+def get_answer(n: int) -> str:
+  solve_fn: Callable[[int, str, str, str], str] = partial(solve, ans="", total_disks=n)
+  return prompt_hanoi(n) + solve_fn(n, "A", "C", "B")
 
 # test
 if __name__ == "__main__":
-    ans = get_answer()
-    print(ans)
+  N_DISKS = 3
+  ans = get_answer(N_DISKS)
+  print(ans)

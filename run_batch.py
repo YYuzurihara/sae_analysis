@@ -9,14 +9,13 @@ import dotenv
 from functools import partial
 from tqdm import tqdm
 import time
+import argparse
 
-dotenv.load_dotenv()
 if torch.cuda.is_available():
     device = "cuda"
 else:
     device = "cpu"
 print(f"Using device: {device}")
-data_dir = os.getenv("DATA_DIR")
 
 def load_model_and_sae(layer: int):
     model = HookedTransformer.from_pretrained(
@@ -105,7 +104,8 @@ def run_batch(
     sae: SAE,
     text: str,
     batch_size: int,
-    pos_start_abl: int
+    pos_start_abl: int,
+    data_dir: str
 ) -> None:
 
     sae.eval()
@@ -120,7 +120,7 @@ def run_batch(
     base_ce_loss, collections = collect(model, sae, input_ids)
     end_time = time.time()
     base_ce_loss = base_ce_loss.cpu() # [1, seq_len]
-    torch.save(base_ce_loss, f"{data_dir}/L{TARGET_LAYER}/base_ce_loss.pt")
+    torch.save(base_ce_loss, f"{data_dir}/base_ce_loss.pt")
     print(f"run_batch: collecting diff took {end_time - start_time} sec, loss: {base_ce_loss.mean().item()}")
 
     # split collections into diff, act_pos_ids, act_feat_ids
@@ -129,7 +129,7 @@ def run_batch(
     # collect reconstruction loss
     reconstruction_loss = (diff[:, 1:, :]**2).sum(dim=-1).cpu() # BOSトークンは無視して4096個を足していることに注意
     print(f"reconstruction_loss: {reconstruction_loss.mean().item()}")
-    torch.save(reconstruction_loss, f"{data_dir}/L{TARGET_LAYER}/reconstruction_loss.pt")
+    torch.save(reconstruction_loss, f"{data_dir}/reconstruction_loss.pt")
 
     act_ids = torch.stack([act_pos_ids, act_feat_ids], dim=1) # (B, 2)
     act_ids = act_ids[act_ids[:, 0] >= pos_start_abl]
@@ -157,15 +157,28 @@ def run_batch(
 
         # 推論しない部分のロスを捨ててから保存
         ce_loss = torch.cat([_ids, ce_loss], dim=-1).cpu()
-        torch.save(ce_loss, f"{data_dir}/L{TARGET_LAYER}/ce_loss_batch{i}.pt")
+        torch.save(ce_loss, f"{data_dir}/ce_loss_batch{i}.pt")
     return
 
 if __name__ == "__main__":
-    TARGET_LAYER = 16
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--layer", type=int, required=True)
+    parser.add_argument("--n", type=int, required=True)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--pos_start_abl", type=int, default=2)
+    args = parser.parse_args()
+    TARGET_LAYER = args.layer
+    BATCH_SIZE = args.batch_size
+    N_DISKS = args.n
+    POS_START_ABL = args.pos_start_abl
 
-    os.makedirs(f"{data_dir}/L{TARGET_LAYER}", exist_ok=True)
+    dotenv.load_dotenv()
+    data_dir = os.getenv("DATA_DIR")
+
+    data_dir = f"{data_dir}/L{TARGET_LAYER}/N{N_DISKS}"
+    os.makedirs(data_dir, exist_ok=True)
 
     model, sae = load_model_and_sae(layer=TARGET_LAYER)
     print("loaded model and sae")
-    text = get_answer()
-    run_batch(model, sae, text, batch_size=128, pos_start_abl=2)
+    text = get_answer(N_DISKS)
+    run_batch(model, sae, text, batch_size=BATCH_SIZE, pos_start_abl=POS_START_ABL)
