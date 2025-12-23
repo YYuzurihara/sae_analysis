@@ -4,7 +4,7 @@ import torch
 
 model = HookedTransformer.from_pretrained("meta-llama/Llama-3.1-8B", device="cpu", dtype=torch.bfloat16)
 
-text = get_answer()
+text = get_answer(4)
 tokens = model.to_str_tokens(text, prepend_bos=True)
 print(f"length of tokens: {len(tokens)}")
 print(f"Tokens: {tokens[POS_TO_START_SOLVE:]}")
