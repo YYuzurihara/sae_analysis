@@ -181,4 +181,4 @@ if __name__ == "__main__":
     model, sae = load_model_and_sae(layer=TARGET_LAYER)
     print("loaded model and sae")
     text = get_answer(N_DISKS)
-    run_batch(model, sae, text, batch_size=BATCH_SIZE, pos_start_abl=POS_START_ABL)
+    run_batch(model, sae, text, batch_size=BATCH_SIZE, pos_start_abl=POS_START_ABL, data_dir=data_dir)
