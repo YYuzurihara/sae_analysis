@@ -105,8 +105,9 @@ def plot_pos_dist(
 
 if __name__ == "__main__":
     TARGET_LAYER = 8
+    N_DISKS = 3
     dotenv.load_dotenv()
-    data_dir = os.getenv("DATA_DIR") + f"/L{TARGET_LAYER}"
+    data_dir = os.getenv("DATA_DIR") + f"/L{TARGET_LAYER}/N{N_DISKS}"
 
     os.makedirs(f"images", exist_ok=True)
 
