@@ -47,7 +47,8 @@ def plot_loss(
     max_loss: torch.Tensor,
     base_ce_loss: torch.Tensor,
     save_dir: str,
-    layer: int
+    layer: int,
+    n_disks: int
 ) -> None:
     # min_loss, max_loss, base_lossの3つをプロット
     plt.figure()
@@ -57,8 +58,8 @@ def plot_loss(
     plt.legend(loc='upper right')
     plt.xlabel("sequence")
     plt.ylabel("loss")
-    plt.title(f"L{layer} minimum vs maximum vs baseline losses")
-    plt.savefig(os.path.join(save_dir, f"L{layer}_losses.png"))
+    plt.title(f"L{layer} N{n_disks} minimum vs maximum vs baseline losses")
+    plt.savefig(os.path.join(save_dir, f"L{layer}_N{n_disks}_losses.png"))
 
     # min_loss, base_lossの2つをプロット
     plt.figure()
@@ -68,13 +69,14 @@ def plot_loss(
     plt.xlabel("sequence")
     plt.ylabel("loss")
     plt.title(f"L{layer} minimum vs baseline losses")
-    plt.savefig(os.path.join(save_dir, f"L{layer}_min_base_losses.png"))
+    plt.savefig(os.path.join(save_dir, f"L{layer}_N{n_disks}_min_base_losses.png"))
 
 def plot_pos_dist(
     min_loss: torch.Tensor,
     max_loss: torch.Tensor,
     save_dir: str,
-    layer: int
+    layer: int,
+    n_disks: int
 ) -> None:
     min_loss = min_loss.numpy()
     max_loss = max_loss.numpy()
@@ -87,8 +89,8 @@ def plot_pos_dist(
     plt.xticks(range(len(position_count)), position_count.index, rotation=90)
     plt.xlabel("position")
     plt.ylabel("number of activations")
-    plt.title(f"L{layer} minimum position distribution")
-    plt.savefig(os.path.join(save_dir, f"L{layer}_min_pos_dist.png"))
+    plt.title(f"L{layer} N{n_disks} minimum position distribution")
+    plt.savefig(os.path.join(save_dir, f"L{layer}_N{n_disks}_min_pos_dist.png"))
 
     # max_lossにおいて活性化したpositionの分布を棒グラフとしてプロット
     df_max = pd.DataFrame(max_loss, columns=["position", "feature", "loss"])
@@ -99,19 +101,33 @@ def plot_pos_dist(
     plt.xticks(range(len(position_count)), position_count.index, rotation=90)
     plt.xlabel("position")
     plt.ylabel("number of activations")
-    plt.title(f"L{layer} maximum position distribution")
-    plt.savefig(os.path.join(save_dir, f"L{layer}_max_pos_dist.png"))
+    plt.title(f"L{layer} N{n_disks} maximum position distribution")
+    plt.savefig(os.path.join(save_dir, f"L{layer}_N{n_disks}_max_pos_dist.png"))
 
 
 if __name__ == "__main__":
-    TARGET_LAYER = 8
+    TARGET_LAYER = 24
     N_DISKS = 3
     dotenv.load_dotenv()
     data_dir = os.getenv("DATA_DIR") + f"/L{TARGET_LAYER}/N{N_DISKS}"
 
-    os.makedirs(f"images", exist_ok=True)
+    save_dir = f"images/L{TARGET_LAYER}/N{N_DISKS}"
+    os.makedirs(save_dir, exist_ok=True)
 
     ce_losses, reconstruction_loss, base_ce_loss = load_tensors(data_dir)
     min_loss, max_loss = get_min_max_loss(ce_losses)
-    plot_loss(min_loss, max_loss, base_ce_loss, "images", TARGET_LAYER)
-    plot_pos_dist(min_loss, max_loss, "images", TARGET_LAYER)
+    plot_loss(
+        min_loss=min_loss,
+        max_loss=max_loss,
+        base_ce_loss=base_ce_loss,
+        save_dir=save_dir,
+        layer=TARGET_LAYER,
+        n_disks=N_DISKS
+    )
+    plot_pos_dist(
+        min_loss=min_loss,
+        max_loss=max_loss,
+        save_dir=save_dir,
+        layer=TARGET_LAYER,
+        n_disks=N_DISKS
+    )
