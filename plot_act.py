@@ -52,8 +52,8 @@ def plot_act(
     return
 
 if __name__ == "__main__":
-    N_DISKS = 3
-    csv_path = 'act_ids_hanoi3.csv'
+    N_DISKS = 4
+    csv_path = f'csv/act_ids_hanoi{N_DISKS}.csv'
     fig_dir = f'images/accuracy/N{N_DISKS}'
     layers = [8,16,24]
 

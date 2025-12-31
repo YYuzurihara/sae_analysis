@@ -3,7 +3,7 @@ import torch
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
 from sae_lens import SAE
-from typing import List, Dict, Callable
+from typing import List, Callable
 from functools import partial
 import pandas as pd
 from plot_acc import add_labels
@@ -78,7 +78,7 @@ def get_act(model: HookedTransformer, sae: SAE, text: str) -> pd.DataFrame:
 if __name__ == "__main__":
     layers = [8,16,24]
     model, saes = load_model(layers)
-    n = 3
+    n = 4
     text = get_answer(n)
 
     df_total = pd.DataFrame(columns=["token", "label"] + [f"layer_{layer}" for layer in layers])
@@ -88,4 +88,4 @@ if __name__ == "__main__":
             df_total["token"] = df["token"]
         df_total[f"layer_{layer}"] = df["act_ids"]
         df_total["label"] = df["label"]
-    df_total.to_csv(f"act_ids_hanoi{n}.csv", index=False)
+    df_total.to_csv(f"csv/act_ids_hanoi{n}.csv", index=False)
