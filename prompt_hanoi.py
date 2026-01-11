@@ -1,9 +1,7 @@
 from typing import Callable
 from functools import partial
 
-N_DISKS: int = 3
-
-def prompt_hanoi(n: int) -> str:
+def prompt_hanoi(n: int, func_name: str = "solve") -> str:
   return f"""Solve Tower of Hanoi problem with {n} disks.
 
 Rules:
@@ -16,7 +14,7 @@ Rules:
 
 Output format (strict):
 - Show every recursive call explicitly using:
-  CALL solve(n, from, to, aux)
+  CALL {func_name}(n, from, to, aux)
   RETURN
 - Inside the trace, show every actual move operation using:
   move <disk> <from> <to>
@@ -24,17 +22,23 @@ Output format (strict):
 - Do NOT include any commentary or explanation outside of the trace.
 
 Psudocode:
-def solve(n, from, to, aux):
+def {func_name}(n, from, to, aux):
   if n == 1:
     move 1 from to
   else:
-    solve(n-1, from, aux, to)
+    {func_name}(n-1, from, aux, to)
     move n from to
-    solve(n-1, aux, to, from)
+    {func_name}(n-1, aux, to, from)
 
-Example for the base case (n=1):
-CALL solve(1, A, C, B)
-  move 1 A C
+Example for the base case (n=2):
+CALL {func_name}(2, A, C, B)
+  CALL {func_name}(1, A, B, C)
+    move 1 A B
+  RETURN
+  move 2 A C
+  CALL {func_name}(1, B, C, A)
+    move 1 B C
+  RETURN
 RETURN
 
 Your task:
@@ -49,26 +53,30 @@ Output ONLY the trace, following the exact format and indentation rules above.
 """
 
 # 推論を開始するトークン位置
-POS_TO_START_SOLVE: int = 331
+# POS_TO_START_SOLVE: int = 331
 
-def solve(n:int, fr:str, to:str, aux:str, ans:str, total_disks:int) -> str:
+def solve(n:int, fr:str, to:str, aux:str, ans:str, total_disks:int, func_name: str = "solve") -> str:
   tabs = '  ' * (total_disks - n)
-  ans += f"{tabs}CALL solve({n},{fr},{to})\n"
+  ans += f"{tabs}CALL {func_name}({n}, {fr}, {to}, {aux})\n"
   if n == 1:
     ans += f"{tabs}  move {n} {fr} {to}\n"
   else:
-    ans = solve(n-1, fr, aux, to, ans, total_disks)
+    ans = solve(n-1, fr, aux, to, ans, total_disks, func_name)
     ans += f"{tabs}  move {n} {fr} {to}\n"
-    ans = solve(n-1, aux, to, fr, ans, total_disks)
+    ans = solve(n-1, aux, to, fr, ans, total_disks, func_name)
   ans += f"{tabs}RETURN\n"
   return ans
 
-def get_answer(n: int) -> str:
-  solve_fn: Callable[[int, str, str, str], str] = partial(solve, ans="", total_disks=n)
-  return prompt_hanoi(n) + solve_fn(n, "A", "C", "B")
+def get_answer(n: int, func_name: str = "solve") -> tuple[str, str]:
+  """
+  return: (prompt, target output)
+  """
+  solve_fn: Callable[[int, str, str, str], str] = partial(solve, ans="", total_disks=n, func_name=func_name)
+  return prompt_hanoi(n, func_name=func_name), solve_fn(n, "A", "C", "B")
 
 # test
 if __name__ == "__main__":
   N_DISKS = 3
-  ans = get_answer(N_DISKS)
-  print(ans)
+  prompt, target_output = get_answer(N_DISKS, func_name="solve")
+  print(prompt)
+  print(target_output)
