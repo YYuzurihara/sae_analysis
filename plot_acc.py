@@ -1,4 +1,4 @@
-from prompt_hanoi import get_answer, POS_TO_START_SOLVE
+from prompt_hanoi import get_answer
 import torch
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
@@ -6,7 +6,7 @@ from sae_lens import SAE
 import os
 import matplotlib.pyplot as plt
 from transformers import PreTrainedTokenizer
-from typing import List, Tuple
+from typing import List
 
 if torch.cuda.is_available():
     device = "cuda"
@@ -30,52 +30,57 @@ def load_model(layer: int|None=None) -> tuple[HookedTransformer, SAE|None]:
         sae = None
     return model, sae
 
-def add_labels(pred_text: str, tokenizer: PreTrainedTokenizer) -> List[str]:
+def add_labels(pred_text: str, tokenizer: PreTrainedTokenizer, n: int) -> List[str]:
     # 各トークンIDに対応するラベルをリスト化する
     labels = []
     
-    n = -1
     for line in pred_text.split("\n"):
         if "CALL" in line:
-            n = int(line.split("(")[1].split(",")[0])
+            depth = n - int(line.split("(")[1].split(",")[0])
             token_ids = tokenizer.encode(line + "\n", add_special_tokens=False)
             # print(tokenizer.decode(token_ids))
-            [labels.append(f"n{n} call") for _ in token_ids]
+            [labels.append(f"d{depth} call") for _ in token_ids]
 
         elif "move" in line:
             token_ids = tokenizer.encode(line + "\n", add_special_tokens=False)
             # print(tokenizer.decode(token_ids))
-            n = int(line.split("move")[-1].split(" ")[1])
-            [labels.append(f"n{n} move") for _ in token_ids]
+            depth = n - int(line.split("move")[-1].split(" ")[1])
+            [labels.append(f"d{depth} move") for _ in token_ids]
 
         elif "RETURN" in line:
             token_ids = tokenizer.encode(line + "\n", add_special_tokens=False)
             # print(tokenizer.decode(token_ids))
-            [labels.append(f"n{n} return") for _ in token_ids]
-            n += 1
+            [labels.append(f"d{depth} return") for _ in token_ids]
+            depth -= 1
+        else:
+            assert line == "", "Invalid line: " + line
     return labels
 
 @torch.no_grad()
 def get_accuracy(
     model: HookedTransformer,
     sae: SAE|None,
-    text: str
-) -> Tuple[torch.Tensor, str]:
+    text: str,
+    target_output: str
+) -> torch.Tensor:
 
     if sae is not None:
         sae.eval()
     model.eval()
 
     # tokenize
-    input_ids = model.to_tokens(text, prepend_bos=True, truncate=False)[:, :-1] # (1, n)
-    target_idx = input_ids[:, POS_TO_START_SOLVE:].view(-1) # (m,)
+    input_ids = model.to_tokens(text, prepend_bos=True, truncate=False) # (1, n)
+    target_idx = model.to_tokens(target_output, prepend_bos=False, truncate=False).view(-1) # (m,)
     m = target_idx.size(0)
 
+    print(model.to_string(target_idx))
+
     logits = model.run_with_hooks(input_ids, return_type="logits") # (1, n, vocab_size)
-    logits = logits[:, POS_TO_START_SOLVE-1:-1, :] # (1, m, vocab_size)
+    logits = logits[:, -m-1:-1, :] # (1, m, vocab_size)
     probs = logits.softmax(dim=-1).view(-1, logits.shape[-1]) # (m, vocab_size)
     target_probs = probs[torch.arange(m), target_idx] # (m,)
-    return target_probs.float().cpu(), "".join(model.to_str_tokens(target_idx))
+
+    return target_probs.float().cpu()
 
 def plot_accuracy(accuracy: torch.Tensor, data_dir: str, labels: List[str]) -> None:
     plt.figure(figsize=(14, 6))
@@ -110,14 +115,15 @@ def plot_accuracy(accuracy: torch.Tensor, data_dir: str, labels: List[str]) -> N
     plt.close()
 
 if __name__ == "__main__":
-    N_DISKS = 5
+    N_DISKS = 6
+    FUNC_NAME = "solve"
 
     data_dir = f"images/accuracy/N{N_DISKS}"
     os.makedirs(data_dir, exist_ok=True)
 
     model, sae = load_model()
     print("loaded model and sae")
-    text = get_answer(N_DISKS)
-    accuracy, target_text = get_accuracy(model, sae, text)
-    labels = add_labels(target_text, model.tokenizer)
+    prompt, target_output = get_answer(N_DISKS, func_name=FUNC_NAME)
+    accuracy = get_accuracy(model, sae, prompt+target_output, target_output)
+    labels = add_labels(target_output, model.tokenizer, N_DISKS)
     plot_accuracy(accuracy, data_dir, labels)
