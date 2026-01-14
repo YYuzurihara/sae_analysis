@@ -44,7 +44,7 @@ def ids_collection_hook(
     act_ids.append(torch.stack([act_pos_ids, act_feat_ids], dim=1))
     return acts
 
-def get_act(model: HookedTransformer, sae: SAE, text: str) -> pd.DataFrame:
+def get_act(model: HookedTransformer, sae: SAE, text: str, n: int) -> pd.DataFrame:
     act_ids = []
     tokens = model.to_tokens(text, prepend_bos=True)
     tokens = tokens.to(device)
@@ -62,7 +62,7 @@ def get_act(model: HookedTransformer, sae: SAE, text: str) -> pd.DataFrame:
     # ラベルを付与
     target_idx = tokens[:, POS_TO_START_SOLVE:].view(-1)
     target_text = "".join(model.to_str_tokens(target_idx))
-    target_labels = ["None"]*(POS_TO_START_SOLVE-1) + add_labels(target_text, model.tokenizer)
+    target_labels = ["None"]*(POS_TO_START_SOLVE-1) + add_labels(target_text, model.tokenizer, n)
     # act_idsを展開する
     act_ids = act_ids[0].view(-1, 2) # (n, 2), nはactivated featureの数
 
@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
     df_total = pd.DataFrame(columns=["token", "label"] + [f"layer_{layer}" for layer in layers])
     for layer, sae in zip(layers, saes):
-        df = get_act(model, sae, text)
+        df = get_act(model, sae, text, n)
         if df_total["token"].isnull().all():
             df_total["token"] = df["token"]
         df_total[f"layer_{layer}"] = df["act_ids"]
