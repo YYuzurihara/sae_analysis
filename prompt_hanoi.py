@@ -52,9 +52,6 @@ Output ONLY the trace, following the exact format and indentation rules above.
 ```
 """
 
-# 推論を開始するトークン位置
-# POS_TO_START_SOLVE: int = 331
-
 def solve(n:int, fr:str, to:str, aux:str, ans:str, total_disks:int, func_name: str = "solve") -> str:
   tabs = '  ' * (total_disks - n)
   ans += f"{tabs}CALL {func_name}({n}, {fr}, {to}, {aux})\n"
@@ -79,4 +76,5 @@ if __name__ == "__main__":
   N_DISKS = 3
   prompt, target_output = get_answer(N_DISKS, func_name="solve")
   print(prompt)
+  print("-"*100)
   print(target_output)

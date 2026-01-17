@@ -10,14 +10,14 @@ from typing import List
 from transformers import AutoModelForCausalLM
 from model_config import ModelConfig, llama_scope_lxr_32x, llama_scope_r1_distill
 
-if torch.cuda.is_available():
-    device = "cuda"
-else:
-    device = "cpu"
-print(f"Using device: {device}")
+def load_model(
+    model_config: ModelConfig,
+    skip_model: bool=False,
+    skip_sae: bool=False,
+    skip_hf_model: bool=False
+    ) -> tuple[HookedTransformer, SAE|None]:
 
-def load_model(model_config: ModelConfig) -> tuple[HookedTransformer, SAE|None]:
-    if model_config.hf_model_name is not None:
+    if model_config.hf_model_name is not None and not skip_hf_model:
         hf_model = AutoModelForCausalLM.from_pretrained(
             model_config.hf_model_name,
             dtype=torch.bfloat16
@@ -25,18 +25,21 @@ def load_model(model_config: ModelConfig) -> tuple[HookedTransformer, SAE|None]:
     else:
         hf_model = None
 
-    model = HookedTransformer.from_pretrained(
-        model_config.model_name,
-        device=device,
-        hf_model=hf_model,
-        dtype=torch.bfloat16, # bf16で推論,これが実行時間の面で非常に重要
-    )
+    if not skip_model:
+        model = HookedTransformer.from_pretrained(
+            model_config.model_name,
+            device=model_config.device,
+            hf_model=hf_model,
+            dtype=torch.bfloat16, # bf16で推論,これが実行時間の面で非常に重要
+        )
+    else:
+        model = None
 
-    if model_config.sae_id is not None:
+    if not skip_sae:
         sae = SAE.from_pretrained(
             release=model_config.release,
             sae_id=model_config.sae_id,
-            device=device
+            device=model_config.device
         )
     else:
         sae = None
@@ -137,15 +140,16 @@ def plot_probability(probability: torch.Tensor, data_dir: str, labels: List[str]
     plt.close()
 
 if __name__ == "__main__":
-    N_DISKS = 5
+    N_DISKS = 3
     FUNC_NAME = "solve"
-    MODEL_CONFIG = llama_scope_lxr_32x(None)
-    # MODEL_CONFIG = llama_scope_r1_distill(None)
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    MODEL_CONFIG = llama_scope_lxr_32x(DEVICE)
+    # MODEL_CONFIG = llama_scope_r1_distill(DEVICE)
 
     data_dir = f"images/probability/{MODEL_CONFIG.dir_name}/N{N_DISKS}"
     os.makedirs(data_dir, exist_ok=True)
 
-    model, sae = load_model(MODEL_CONFIG)
+    model, sae = load_model(MODEL_CONFIG, skip_sae=True)
     print("loaded model and sae")
     prompt, target_output = get_answer(N_DISKS, func_name=FUNC_NAME)
     probability = get_probability(model, sae, prompt+target_output, target_output)
