@@ -6,7 +6,7 @@ from sae_lens import SAE
 from typing import List, Callable
 from functools import partial
 import pandas as pd
-from plot_acc import add_labels
+from plot_prob import add_labels
 
 if torch.cuda.is_available():
     device = "cuda"
