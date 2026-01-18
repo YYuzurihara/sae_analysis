@@ -147,7 +147,7 @@ def calculate_correlations(
     centered1 = feature_matrix1 - mean1
     centered2 = feature_matrix2 - mean2
     
-    # 不偏標準偏差を計算（ddof=1）
+    # 不偏標準偏差を計算
     std1 = np.sqrt((centered1 ** 2).sum(axis=1, keepdims=True) / (n - 1))
     std2 = np.sqrt((centered2 ** 2).sum(axis=1, keepdims=True) / (n - 1))
     
