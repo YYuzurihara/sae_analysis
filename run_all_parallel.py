@@ -55,16 +55,16 @@ def main():
                 
                 if not success:
                     failed_tasks.append((layer1, layer2, error))
-                    tqdm.write(f"❌ Failed: layer1={layer1}, layer2={layer2}")
+                    tqdm.write(f"Failed: layer1={layer1}, layer2={layer2}")
                     if error:
                         tqdm.write(f"   Error: {error[:100]}")
     
     # 結果のサマリー
     print("\n" + "="*50)
-    print(f"✅ Completed: {len(tasks) - len(failed_tasks)}/{len(tasks)} tasks")
+    print(f"Completed: {len(tasks) - len(failed_tasks)}/{len(tasks)} tasks")
     
     if failed_tasks:
-        print(f"❌ Failed: {len(failed_tasks)} tasks")
+        print(f"Failed: {len(failed_tasks)} tasks")
         print("\nFailed tasks:")
         for layer1, layer2, error in failed_tasks:
             print(f"  - layer1={layer1}, layer2={layer2}")
