@@ -7,6 +7,8 @@ from numpy.typing import ArrayLike
 from itertools import product
 from tqdm import tqdm
 import argparse
+from scipy.stats import pearsonr
+from typing import Dict, Tuple
 
 def load_activation(data_dir_name: str) -> pd.DataFrame:
     """データ全体をまとめて扱えるようにするために、DataFrameに変換する"""
@@ -76,13 +78,43 @@ def get_feature_acts(data: pd.DataFrame, layer: int, act_id: int) -> ArrayLike:
     else:
         return np.array([])
 
+def build_feature_matrix(data: pd.DataFrame, layer: int, unique_ids: ArrayLike, total_seqlen: int) -> np.ndarray:
+    """
+    全てのact_idに対するfeature_actsを事前に行列形式で構築
+    返り値: shape (len(unique_ids), total_seqlen)
+    """
+    filtered_data = data[(data["layer"] == layer)]
+    
+    # 結果を格納する行列（ゼロ初期化）
+    feature_matrix = np.zeros((len(unique_ids), total_seqlen), dtype=np.float32)
+    
+    # act_idからインデックスへのマッピング
+    id_to_idx = {act_id: idx for idx, act_id in enumerate(unique_ids)}
+    
+    # 各行のデータを処理
+    offset = 0
+    for _, row in filtered_data.iterrows():
+        act_ids = row["act_ids"]  # shape: (n,)
+        feature_acts = row["feature_acts"]  # shape: (1, m, n)
+        seq_len = feature_acts.shape[1]
+        
+        # 各act_idについて対応する位置に値を格納
+        for i, act_id in enumerate(act_ids):
+            if act_id in id_to_idx:
+                idx = id_to_idx[act_id]
+                feature_matrix[idx, offset:offset + seq_len] = feature_acts[0, :, i]
+        
+        offset += seq_len
+    
+    return feature_matrix
+
 
 def calculate_correlations(
     data1: pd.DataFrame, layer1: int,
     data2: pd.DataFrame, layer2: int,
     include_inactive: bool = False # 発火しなかったトークンを特徴として考慮するかどうか
 ) -> pd.DataFrame:
-    """data1とdata2の相関係数を計算する"""
+    """data1とdata2の相関係数を計算する（高速化版）"""
 
     if include_inactive:
         # ここは無視する
@@ -98,26 +130,51 @@ def calculate_correlations(
     # layer内の一意なact_idを取得
     unique_ids1 = get_unique_ids(data1, layer1)
     unique_ids2 = get_unique_ids(data2, layer2)
+    
+    # 事前に全てのfeature_actsを行列形式で構築
+    feature_matrix1 = build_feature_matrix(data1, layer1, unique_ids1, total_seqlen1)
+    feature_matrix2 = build_feature_matrix(data2, layer2, unique_ids2, total_seqlen2)
+    
+    print(f"Feature matrix shapes: {feature_matrix1.shape}, {feature_matrix2.shape}")
+    print(f"Calculating correlations for {len(unique_ids1)} x {len(unique_ids2)} = {len(unique_ids1) * len(unique_ids2)} combinations...")
+    
+    # 相関行列を計算（ベクトル化版、np.corrcoefと同じ挙動）
+    n = total_seqlen1
+    
+    # 中心化（平均を引く）
+    mean1 = feature_matrix1.mean(axis=1, keepdims=True)
+    mean2 = feature_matrix2.mean(axis=1, keepdims=True)
+    centered1 = feature_matrix1 - mean1
+    centered2 = feature_matrix2 - mean2
+    
+    # 不偏標準偏差を計算（ddof=1）
+    std1 = np.sqrt((centered1 ** 2).sum(axis=1, keepdims=True) / (n - 1))
+    std2 = np.sqrt((centered2 ** 2).sum(axis=1, keepdims=True) / (n - 1))
+    
+    # ゼロ除算を防ぐ
+    assert std1.all() != 0, "std1 is all zero"
+    assert std2.all() != 0, "std2 is all zero"
+    
+    # 標準化
+    normalized1 = centered1 / std1
+    normalized2 = centered2 / std2
+    
+    # 相関行列 = 標準化したベクトルの内積 / n
+    # これはnp.corrcoefと同じ計算
+    correlation_matrix = (normalized1 @ normalized2.T) / n
 
-    # 各act_idに対応するfeature_actsの平均と標準偏差を計算
+    print(f"correlation_matrix: {correlation_matrix}")
+    
+    # 結果をDataFrameに変換
     results = []
-    total_combinations = len(unique_ids1) * len(unique_ids2)
-    for act_id1, act_id2 in tqdm(product(unique_ids1, unique_ids2), total=total_combinations):
-        feature_acts1 = get_feature_acts(data1, layer1, act_id1)
-        feature_acts2 = get_feature_acts(data2, layer2, act_id2)
-
-        # 非発火トークンを0で埋め、total_seqlenでshapeを揃える
-        if feature_acts1.shape[0] != total_seqlen1:
-            feature_acts1 = np.pad(feature_acts1, (0, total_seqlen1 - feature_acts1.shape[0]), mode="constant")
-        if feature_acts2.shape[0] != total_seqlen2:
-            feature_acts2 = np.pad(feature_acts2, (0, total_seqlen2 - feature_acts2.shape[0]), mode="constant")
-
-        correlation = np.corrcoef(feature_acts1, feature_acts2) # shape: (2, 2)
-        results.append({
-            "act_id1": act_id1,
-            "act_id2": act_id2,
-            "correlation": correlation[0, 1]
-        })
+    for i, act_id1 in enumerate(tqdm(unique_ids1, desc="Converting to DataFrame")):
+        for j, act_id2 in enumerate(unique_ids2):
+            results.append({
+                "act_id1": act_id1,
+                "act_id2": act_id2,
+                "correlation": correlation_matrix[i, j]
+            })
+    
     return pd.DataFrame(results)
 
 if __name__ == "__main__":
