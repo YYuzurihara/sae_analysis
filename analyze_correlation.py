@@ -71,6 +71,8 @@ def get_feature_acts(data: pd.DataFrame, layer: int, act_id: int) -> ArrayLike:
         if len(indices) > 0:
             i = indices[0]
             feature_acts_list.append(feature_acts[0, :, i])  # shape: (m,)
+        else:
+            feature_acts_list.append(np.zeros(feature_acts.shape[1]))
     
     # すべてのfeature_actsを結合
     if len(feature_acts_list) > 0:
