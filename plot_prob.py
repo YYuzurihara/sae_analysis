@@ -12,8 +12,8 @@ from model_config import ModelConfig, llama_scope_lxr_32x, llama_scope_r1_distil
 
 def load_model(
     model_config: ModelConfig,
-    skip_model: bool=False,
-    skip_sae: bool=False,
+    model: HookedTransformer|None=None,
+    sae: SAE|None=None,
     skip_hf_model: bool=False
     ) -> tuple[HookedTransformer, SAE|None]:
 
@@ -25,24 +25,20 @@ def load_model(
     else:
         hf_model = None
 
-    if not skip_model:
+    if model is None:
         model = HookedTransformer.from_pretrained(
             model_config.model_name,
             device=model_config.device,
             hf_model=hf_model,
             dtype=torch.bfloat16, # bf16で推論,これが実行時間の面で非常に重要
         )
-    else:
-        model = None
 
-    if not skip_sae:
+    if sae is None:
         sae = SAE.from_pretrained(
             release=model_config.release,
             sae_id=model_config.sae_id,
             device=model_config.device
         )
-    else:
-        sae = None
     return model, sae
 
 def add_labels(pred_text: str, tokenizer: PreTrainedTokenizer, n: int) -> List[str]:
