@@ -63,27 +63,33 @@ def visualize_correlation(
     plt.close()
 
 def visualize_correlation_dist(
-    save_path: lambda layer: str,
+    save_path: str,
     base: str = "act_id1",
     debug: bool = False
 ) -> None:
     """
     同じ層の活性化値の相関の分布をプロットする
     """
+    fig, axes = plt.subplots(8, 4, figsize=(16, 24), constrained_layout=True)
     for layer in tqdm(range(32)):
+        max_corrs = find_max_correlation(layer, layer, base=base)
+
         if debug:
-            max_corrs = find_max_correlation(layer, layer, base=base)
             print(f"max correlation of layer {layer}: {max_corrs.mean()}")
             top_100 = max_corrs.sort_values(ascending=False).head(100)
             print(top_100.values)
-        else:
-            max_corrs = find_max_correlation(layer, layer, base=base)
-            plt.hist(max_corrs, bins=10)
-            plt.title(f"Feature correlation distribution (layer={layer})")
-            plt.xlabel("max correlation")
-            plt.ylabel("frequency")
-            plt.savefig(save_path(layer))
-            plt.close()
+
+        row = layer // 4
+        col = layer % 4
+        ax = axes[row, col]
+        ax.hist(max_corrs, bins=10)
+        ax.set_title(f"Layer {layer}")
+        ax.set_xlabel("correlation")
+        ax.set_ylabel("frequency")
+
+    if save_path:
+        plt.savefig(save_path)
+    plt.close(fig)
 
 if __name__ == "__main__":
     # visualize_correlation(
@@ -95,17 +101,11 @@ if __name__ == "__main__":
     #     base="act_id2"
     # )
 
-    # visualize_correlation_dist(
-    #     save_path=lambda layer: f"images/correlation/correlation_distribution_id1_layer_{layer}.png",
-    #     base="act_id1"
-    # )
-    # visualize_correlation_dist(
-    #     save_path=lambda layer: f"images/correlation/correlation_distribution_id2_layer_{layer}.png",
-    #     base="act_id2"
-    # )
-
     visualize_correlation_dist(
-        save_path=None,
-        base="act_id1",
-        debug=True
+        save_path="images/correlation/correlation_distribution_id1_all_layers.png",
+        base="act_id1"
+    )
+    visualize_correlation_dist(
+        save_path="images/correlation/correlation_distribution_id2_all_layers.png",
+        base="act_id2"
     )
