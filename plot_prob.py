@@ -7,27 +7,38 @@ import os
 import matplotlib.pyplot as plt
 from transformers import PreTrainedTokenizer
 from typing import List
+from transformers import AutoModelForCausalLM
+from model_config import ModelConfig, llama_scope_lxr_32x, llama_scope_r1_distill
 
-if torch.cuda.is_available():
-    device = "cuda"
-else:
-    device = "cpu"
-print(f"Using device: {device}")
+def load_model(
+    model_config: ModelConfig,
+    model: HookedTransformer|None=None,
+    sae: SAE|None=None,
+    skip_hf_model: bool=False
+    ) -> tuple[HookedTransformer, SAE|None]:
 
-def load_model(layer: int|None=None) -> tuple[HookedTransformer, SAE|None]:
-    model = HookedTransformer.from_pretrained(
-        "meta-llama/Llama-3.1-8B",
-        device=device,
-        dtype=torch.bfloat16, # bf16で推論,これが実行時間の面で非常に重要
-    )
-    if layer is not None:
-        sae = SAE.from_pretrained(
-            release=f"llama_scope_lxr_32x",
-            sae_id=f"l{layer}r_32x",
-            device=device
+    if model_config.hf_model_name is not None and not skip_hf_model:
+        hf_model = AutoModelForCausalLM.from_pretrained(
+            model_config.hf_model_name,
+            dtype=torch.bfloat16
         )
     else:
-        sae = None
+        hf_model = None
+
+    if model is None:
+        model = HookedTransformer.from_pretrained(
+            model_config.model_name,
+            device=model_config.device,
+            hf_model=hf_model,
+            dtype=torch.bfloat16, # bf16で推論,これが実行時間の面で非常に重要
+        )
+
+    if sae is None:
+        sae = SAE.from_pretrained(
+            release=model_config.release,
+            sae_id=model_config.sae_id,
+            device=model_config.device
+        )
     return model, sae
 
 def add_labels(pred_text: str, tokenizer: PreTrainedTokenizer, n: int) -> List[str]:
@@ -57,7 +68,7 @@ def add_labels(pred_text: str, tokenizer: PreTrainedTokenizer, n: int) -> List[s
     return labels
 
 @torch.no_grad()
-def get_accuracy(
+def get_probability(
     model: HookedTransformer,
     sae: SAE|None,
     text: str,
@@ -82,13 +93,18 @@ def get_accuracy(
 
     return target_probs.float().cpu()
 
-def plot_accuracy(accuracy: torch.Tensor, data_dir: str, labels: List[str]) -> None:
+def plot_probability(probability: torch.Tensor, data_dir: str, labels: List[str]) -> None:
     plt.figure(figsize=(14, 6))
+    
+    # ラベルの種類に応じた色を定義
+    label_colors = {
+        'call': '#AEC6CF',      # ライトブルー
+        'move': '#C1E1C1',      # ライトグリーン
+        'return': '#FFB6A3'     # ライトサーモン
+    }
     
     # 連続する同じラベルをグループ化し、背景色を追加
     i = 0
-    colors = plt.cm.Pastel1.colors  # 淡い色のパレット
-    color_idx = 0
 
     while i < len(labels):
         start = i
@@ -96,34 +112,42 @@ def plot_accuracy(accuracy: torch.Tensor, data_dir: str, labels: List[str]) -> N
         while i < len(labels) and labels[i] == current_label:
             i += 1
         
+        # ラベルの種類に応じて色を選択
+        color = '#DDDDDD'  # デフォルト色
+        for key, value in label_colors.items():
+            if key in current_label:
+                color = value
+                break
+        
         # 背景に色付きスパンを追加
-        plt.axvspan(start, i-1, alpha=0.3, color=colors[color_idx % len(colors)])
+        plt.axvspan(start, i-1, alpha=0.3, color=color)
         
         # グループの中心にラベルを配置
         center = (start + i - 1) / 2
         plt.text(center, plt.ylim()[1] * 0.4, current_label, 
                 rotation=90, ha='center', va='center', fontsize=8)
-        
-        color_idx += 1
     
-    plt.plot(accuracy, color='black', linewidth=1.5)
-    plt.xlabel("Position")
-    plt.ylabel("Accuracy")
-    plt.title(f"Accuracy vs Position for N={N_DISKS}")
+    plt.plot(probability, color='black', linewidth=1.5)
+    plt.xlabel("Sequence Length")
+    plt.ylabel("Probability")
+    plt.title(f"Probability vs Token Length for N={N_DISKS}")
     plt.tight_layout()
-    plt.savefig(f"{data_dir}/accuracy.png", dpi=150)
+    plt.savefig(f"{data_dir}/probability.png", dpi=150, bbox_inches="tight")
     plt.close()
 
 if __name__ == "__main__":
-    N_DISKS = 6
+    N_DISKS = 3
     FUNC_NAME = "solve"
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    MODEL_CONFIG = llama_scope_lxr_32x(DEVICE)
+    # MODEL_CONFIG = llama_scope_r1_distill(DEVICE)
 
-    data_dir = f"images/accuracy/N{N_DISKS}"
+    data_dir = f"images/probability/{MODEL_CONFIG.dir_name}/N{N_DISKS}"
     os.makedirs(data_dir, exist_ok=True)
 
-    model, sae = load_model()
+    model, sae = load_model(MODEL_CONFIG, skip_sae=True)
     print("loaded model and sae")
     prompt, target_output = get_answer(N_DISKS, func_name=FUNC_NAME)
-    accuracy = get_accuracy(model, sae, prompt+target_output, target_output)
+    probability = get_probability(model, sae, prompt+target_output, target_output)
     labels = add_labels(target_output, model.tokenizer, N_DISKS)
-    plot_accuracy(accuracy, data_dir, labels)
+    plot_probability(probability, data_dir, labels)

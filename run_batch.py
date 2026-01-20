@@ -1,5 +1,5 @@
-from typing import Callable, List
-from prompt_hanoi import get_answer, POS_TO_START_SOLVE
+from typing import Callable, List, Tuple
+from prompt_hanoi import get_answer
 import torch
 from transformer_lens import HookedTransformer
 from transformer_lens.hook_points import HookPoint
@@ -10,6 +10,7 @@ from functools import partial
 from tqdm import tqdm
 import time
 import argparse
+import pandas as pd
 
 if torch.cuda.is_available():
     device = "cuda"
@@ -50,10 +51,11 @@ def collection_hook(
     # collect diff
     diff = acts - sae_out
     # collect activated features indices
-    _, act_pos_ids, act_feat_ids = torch.where(feature_acts > 0)
+    _, _, act_feat_ids = torch.where(feature_acts > 0)
+    # act_feat_idsの重複を削除
+    act_feat_ids = torch.unique(act_feat_ids)
 
     collections.append(diff)
-    collections.append(act_pos_ids)
     collections.append(act_feat_ids)
     return acts
 
@@ -61,20 +63,17 @@ def collection_hook(
 def ablation_hook(
     acts: torch.Tensor, # shape: [b, n, d_model]
     hook: HookPoint,
-    ablate_ids: torch.Tensor, # shape: [b, 2]
+    ablate_feat_ids: torch.Tensor, # shape: [b]
     diff: torch.Tensor, # shape: [n, d_model],
     encode: Callable[[torch.Tensor], torch.Tensor],
-    decode: Callable[[torch.Tensor], torch.Tensor]
+    decode: Callable[[torch.Tensor], torch.Tensor],
+    pos_start_abl: int=2
 ) -> torch.Tensor:
     features = encode(acts) # shape: [b, n, enc_dim]
     
     # ablateする対象の軸(b, n, enc_dim)を取得
-    abl_batch_ids = torch.arange(ablate_ids.shape[0], device=acts.device) # b - GPUテンソルを明示的に作成
-    abl_pos_ids = ablate_ids[:, 0] # n
-    abl_feat_ids = ablate_ids[:, 1] # enc_dim
-
-    # ablation実行
-    features[abl_batch_ids, abl_pos_ids, abl_feat_ids] = 0
+    abl_batch_ids = torch.arange(ablate_feat_ids.shape[0], device=acts.device) # b - GPUテンソルを明示的に作成
+    features[abl_batch_ids, pos_start_abl:, ablate_feat_ids] = 0
 
     # 復元
     acts_restored = decode(features) + diff # shape: [b, n, d_model]
@@ -84,8 +83,8 @@ def collect(
     model: HookedTransformer,
     sae: SAE,
     tokens: torch.Tensor,
-) -> torch.Tensor:
-    collections = []
+) -> List[torch.Tensor]:
+    collections: List[torch.Tensor] = []
     
     # 一番最後のトークンから予測されるトークンには答えがないので長さが1短くなる
     base_ce_loss = model.run_with_hooks(
@@ -96,69 +95,85 @@ def collect(
             (sae.cfg.metadata.hook_name, partial(collection_hook, encode=sae.encode, decode=sae.decode, collections=collections))
         ]
     )
-    return base_ce_loss[:, POS_TO_START_SOLVE-1:], collections
+    return collections
 
 @torch.no_grad()
 def run_batch(
     model: HookedTransformer,
     sae: SAE,
-    text: str,
+    prompt: str,
+    target_output: str,
     batch_size: int,
-    pos_start_abl: int,
-    data_dir: str
-) -> None:
+    pos_start_abl: int=2
+) -> Tuple[torch.Tensor, torch.Tensor]:
 
     sae.eval()
     model.eval()
 
     # tokenize
-    input_ids = model.to_tokens(text, prepend_bos=True)[:, :-1] # (1, n)
+    text = prompt + target_output
+    input_ids = model.to_tokens(text, prepend_bos=True) # (1, n)
+    target_ids = model.to_tokens(target_output, prepend_bos=False).view(-1) # (m,)
+    m = target_ids.shape[0]
+
 
     # collect diff
     print("run_batch: collecting diff")
     start_time = time.time()
-    base_ce_loss, collections = collect(model, sae, input_ids)
+    collections = collect(model, sae, input_ids)
     end_time = time.time()
-    base_ce_loss = base_ce_loss.cpu() # [1, seq_len]
-    torch.save(base_ce_loss, f"{data_dir}/base_ce_loss.pt")
-    print(f"run_batch: collecting diff took {end_time - start_time} sec, loss: {base_ce_loss.mean().item()}")
+    print(f"run_batch: collecting diff took {end_time - start_time} sec")
 
-    # split collections into diff, act_pos_ids, act_feat_ids
-    diff, act_pos_ids, act_feat_ids = collections
-
-    # collect reconstruction loss
-    reconstruction_loss = (diff[:, 1:, :]**2).sum(dim=-1).cpu() # BOSトークンは無視して4096個を足していることに注意
-    print(f"reconstruction_loss: {reconstruction_loss.mean().item()}")
-    torch.save(reconstruction_loss, f"{data_dir}/reconstruction_loss.pt")
-
-    act_ids = torch.stack([act_pos_ids, act_feat_ids], dim=1) # (B, 2)
-    act_ids = act_ids[act_ids[:, 0] >= pos_start_abl]
+    # split collections into diff, act_feat_ids
+    diff = collections[0]
+    act_feat_ids = collections[1] # [num_features]
 
     # split activated feature ids into batch_size groups
-    batches = act_ids.split(batch_size) # [b, 2] * num_batches
+    batches = act_feat_ids.split(batch_size) # [b] * num_batches
     
     # ablation
+    accuracy = []
     batch_inputs = input_ids.repeat(batch_size, 1) # [b, seq_len]
-    for i,ids in enumerate(tqdm(batches)):
-        # ce_loss: [b, seq_len]
-        ce_loss = model.run_with_hooks(
-            batch_inputs[:ids.shape[0], :], # splitしたバッチのサイズを超えないように末尾をスライス
-            return_type="loss",
+    for feat_ids in tqdm(batches):
+        proc_batch_size = feat_ids.shape[0]
+        logits = model.run_with_hooks(
+            batch_inputs[:proc_batch_size, :], # splitしたバッチのサイズを超えないように末尾をスライス
+            return_type="logits",
             loss_per_token=True,
             fwd_hooks=[
                 (
                     sae.cfg.metadata.hook_name,
-                    partial(ablation_hook, ablate_ids=ids, diff=diff, encode=sae.encode, decode=sae.decode)
+                    partial(
+                        ablation_hook,
+                        ablate_feat_ids=feat_ids,
+                        diff=diff,
+                        encode=sae.encode,
+                        decode=sae.decode,
+                        pos_start_abl=pos_start_abl
+                    )
                 )
             ]
         )
-        ce_loss = ce_loss[:, POS_TO_START_SOLVE-1:].unsqueeze(-1) # [b, seq_len] -> [b, seq_len, 1]
-        _ids = ids.unsqueeze(1).repeat(1, ce_loss.shape[1], 1) # [b, 2] -> [b, 1, 2] -> [b, seq_len, 2]
+        logits = logits[:, -m-1:-1, :] # (b, m, vocab_size)
+        probs = logits.softmax(dim=-1) # (b, m, vocab_size)
+        target_probs = probs[:, torch.arange(m), target_ids] # (b, m)
+        acc = target_probs.float().cpu()
+        # accuracyに対応するアブレーション結果を追加
+        accuracy.append(acc)
+    return torch.cat(accuracy, dim=0).cpu(), act_feat_ids.cpu()
 
-        # 推論しない部分のロスを捨ててから保存
-        ce_loss = torch.cat([_ids, ce_loss], dim=-1).cpu()
-        torch.save(ce_loss, f"{data_dir}/ce_loss_batch{i}.pt")
-    return
+def save_results(accuracy: torch.Tensor, act_feat_ids: torch.Tensor, data_dir: str):
+    # accuracy: (f, m), act_feat_ids: (f,)
+    # DataFrameを作成: feature_id, accuracy のカラムを持つ
+    df = pd.DataFrame({
+        "feature_id": act_feat_ids.numpy(),
+        "accuracy": list(accuracy.numpy())  # 各行に(m,)のaccuracy配列を格納
+    })
+    
+    # CSVとして保存
+    save_path = os.path.join(data_dir, "results.csv")
+    df.to_csv(save_path, index=False)
+    print(f"Results saved to {save_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -170,7 +185,6 @@ if __name__ == "__main__":
     TARGET_LAYER = args.layer
     BATCH_SIZE = args.batch_size
     N_DISKS = args.n
-    POS_START_ABL = args.pos_start_abl
 
     dotenv.load_dotenv()
     data_dir = os.getenv("DATA_DIR")
@@ -180,5 +194,7 @@ if __name__ == "__main__":
 
     model, sae = load_model_and_sae(layer=TARGET_LAYER)
     print("loaded model and sae")
-    text = get_answer(N_DISKS)
-    run_batch(model, sae, text, batch_size=BATCH_SIZE, pos_start_abl=POS_START_ABL, data_dir=data_dir)
+    prompt, target_output = get_answer(N_DISKS)
+    accuracy, act_feat_ids = run_batch(
+        model, sae, prompt, target_output, batch_size=BATCH_SIZE)
+    save_results(accuracy, act_feat_ids, data_dir)
