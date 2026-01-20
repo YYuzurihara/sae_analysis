@@ -25,13 +25,27 @@ def find_max_correlation(
     layer1: int,
     layer2: int,
     base: str = "act_id1"
-) -> float:
+) -> pd.Series:
     assert base in ["act_id1", "act_id2"], "base must be 'act_id1' or 'act_id2'"
 
     correlations = load_correlation(layer1, layer2)
     # act_id1ごとに最大相関値を求める
     max_corrs = correlations.groupby(base)['correlation'].max()
     return max_corrs
+
+def count_highly_correlated_features(
+    layer1: int,
+    layer2: int,
+    threshold: float = 0.9,
+    base: str = "act_id1"
+) -> pd.Series:
+    """
+    指定した層に対して、特徴ごとに相関値がthreshold以上のものの数をカウントする
+    """
+    correlations = load_correlation(layer1, layer2)
+    cnt_correlated = correlations[correlations['correlation'] >= threshold].groupby(base)['correlation'].count()
+    return cnt_correlated
+
 
 def visualize_correlation(
     save_path: str,
@@ -91,6 +105,28 @@ def visualize_correlation_dist(
         plt.savefig(save_path)
     plt.close(fig)
 
+def visualize_count_highly_correlated_features(
+    save_path: str,
+    base: str = "act_id1"
+) -> None:
+    """
+    指定した層に対して、特徴ごとに相関値がthreshold以上のものの数をカウントしてプロットする
+    """
+    fig, axes = plt.subplots(8, 4, figsize=(16, 24), constrained_layout=True)
+    for layer in tqdm(range(32)):
+        cnt_correlated = count_highly_correlated_features(layer, layer, base=base)
+        row = layer // 4
+        col = layer % 4
+        ax = axes[row, col]
+        ax.bar(cnt_correlated.values)
+        ax.set_title(f"Layer {layer}")
+        ax.set_xlabel("count of highly correlated features")
+        ax.set_ylabel("frequency")
+
+    if save_path:
+        plt.savefig(save_path)
+    plt.close(fig)
+
 if __name__ == "__main__":
     # visualize_correlation(
     #     save_path="images/correlation/correlation_heatmap_id1.png",
@@ -101,11 +137,20 @@ if __name__ == "__main__":
     #     base="act_id2"
     # )
 
-    visualize_correlation_dist(
-        save_path="images/correlation/correlation_distribution_id1_all_layers.png",
+    # visualize_correlation_dist(
+    #     save_path="images/correlation/correlation_distribution_id1_all_layers.png",
+    #     base="act_id1"
+    # )
+    # visualize_correlation_dist(
+    #     save_path="images/correlation/correlation_distribution_id2_all_layers.png",
+    #     base="act_id2"
+    # )
+
+    visualize_count_highly_correlated_features(
+        save_path="images/correlation/count_highly_correlated_features_id1.png",
         base="act_id1"
     )
-    visualize_correlation_dist(
-        save_path="images/correlation/correlation_distribution_id2_all_layers.png",
+    visualize_count_highly_correlated_features(
+        save_path="images/correlation/count_highly_correlated_features_id2.png",
         base="act_id2"
     )
