@@ -77,8 +77,7 @@ if __name__ == "__main__":
 
     # NUM_LAYERS = 32
     LAYER = args.layer
-    # DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    DEVICE = "cpu"
+    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
     # model config
     # MODEL_CONFIG = llama_scope_lxr_32x(DEVICE, LAYER)
@@ -96,15 +95,15 @@ if __name__ == "__main__":
             skip_flag = True
         prompt, target_output = get_answer(n, func_name)
         act_ids, feature_acts, target_probs = get_act_prob(model, sae, prompt+target_output, target_output)
-        torch.save(
-            {
-                "layer": LAYER,
-                "n": n,
-                "func_name": func_name,
-                "act_ids": act_ids, # (num_acts,)
-                "feature_acts": feature_acts, # (1, m, num_acts)
-                "target_probs": target_probs, # (m,)
-                "target_output": target_output,
-            },
-            os.path.join(data_dir, f"acts_{LAYER}_{n}_{func_name}.pt")
-        )
+        # torch.save(
+        #     {
+        #         "layer": LAYER,
+        #         "n": n,
+        #         "func_name": func_name,
+        #         "act_ids": act_ids, # (num_acts,)
+        #         "feature_acts": feature_acts, # (1, m, num_acts)
+        #         "target_probs": target_probs, # (m,)
+        #         "target_output": target_output,
+        #     },
+        #     os.path.join(data_dir, f"acts_{LAYER}_{n}_{func_name}.pt")
+        # )

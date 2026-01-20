@@ -47,20 +47,20 @@ def ablation_hook(
     return acts_restored
 
 @torch.no_grad()
-def get_logits_change(
+def get_logits_diff(
     model: HookedTransformer,
     sae: SAE,
     text: str,
     target_output: str,
-    ablate_feat_ids: torch.Tensor # shape: [b], b=1
+    ablate_feat_ids: torch.Tensor # shape: [b]
     ) -> ArrayLike:
     """
     モデルに対してSAE活性値をablationしたときのtarget_tokenにおけるlogitsの変化を計算する
     """
 
     input_ids = model.to_tokens(text, prepend_bos=True, truncate=False) # (1, n)
-    input_ids = input_ids.expand(ablate_feat_ids.shape[0], -1) # (b, n)
-    target_idx = model.to_tokens(target_output, prepend_bos=False, truncate=False).view(-1) # (m,)
+    input_ids = input_ids.expand(ablate_feat_ids.shape[0], -1).to(model.cfg.device) # (b, n)
+    target_idx = model.to_tokens(target_output, prepend_bos=False, truncate=False).view(-1).to(model.cfg.device) # (m,)
     m = target_idx.size(0)
 
     logits = model.run_with_hooks(
@@ -83,7 +83,7 @@ def get_logits_change(
     logits = logits[:, -m-1:-1, :] # (b, m, vocab_size)
     logits_ablated = logits_ablated[:, -m-1:-1, :] # (b, m, vocab_size)
     logits_change = logits - logits_ablated # (b, m, vocab_size)
-    logits_change = logits_change[:, torch.arange(m), target_idx] # (b, m)
+    logits_change = logits_change[:, torch.arange(m, device=logits.device), target_idx] # (b, m)
 
     return logits_change.cpu().float().numpy()
 
@@ -257,6 +257,7 @@ def visualize_feature_similarities(
     fig.savefig(save_path)
     plt.close(fig)
 
+@torch.no_grad()
 def get_attribution_to_logits(
     target_output: str,
     text: str,
@@ -264,8 +265,9 @@ def get_attribution_to_logits(
     save_dir: str,
     threshold: float = 0.9,
     start_layer: int = 0,
-    end_layer: int = 32
-) -> pd.DataFrame:
+    end_layer: int = 32,
+    batch_size: int = 2
+) -> None:
     """
     特徴活性値のcos類似度が閾値以上のものを抽出する
     """
@@ -281,7 +283,6 @@ def get_attribution_to_logits(
     total_layers = len(grouped)
     print(f"Total layers to process: {total_layers}")
     
-    attribution_to_logits = []
     model1, sae1 = None, None
     model2, sae2 = None, None
     
@@ -290,37 +291,68 @@ def get_attribution_to_logits(
         print(f"\n[{layer_idx}/{total_layers}] Processing Layer {layer} ({len(group)} features)...")
         
         # モデルをロード
-        print(f"  Loading models for layer {layer}...")
         sae1, sae2 = None, None
         model_config1 = llama_scope_lxr_32x("cpu", layer)
         model_config2 = llama_scope_r1_distill("cpu", layer)
         model1, sae1 = load_model(model_config1, model=model1, sae=sae1)
         model2, sae2 = load_model(model_config2, model=model2, sae=sae2)
-        print(f"  Models loaded. Computing attribution...")
         
-        for _, row in tqdm(group.iterrows(), total=len(group), desc=f"  Layer {layer}", leave=False):
-            act_id1 = int(row['act_id1'])
-            act_id2 = int(row['act_id2'])
-
-            logits_change1 = get_logits_change(model1, sae1, text, target_output, ablate_feat_ids=torch.tensor([act_id1]))
-            logits_change2 = get_logits_change(model2, sae2, text, target_output, ablate_feat_ids=torch.tensor([act_id2]))
-            attribution_to_logits.append({
+        # 特徴IDをリスト化
+        act_ids1 = group['act_id1'].astype(int).tolist()
+        act_ids2 = group['act_id2'].astype(int).tolist()
+        
+        # model1のバッチ処理
+        print(f"  Processing model1 (batch_size={batch_size})...")
+        model1.cuda()
+        sae1.cuda()
+        logits_diffs1 = []
+        for i in tqdm(range(0, len(act_ids1), batch_size), desc=f"  Model1 Layer {layer}", leave=False):
+            batch_ids = act_ids1[i:i+batch_size]
+            batch_tensor = torch.tensor(batch_ids).cuda()
+            diff = get_logits_diff(
+                model1, sae1, text, target_output, ablate_feat_ids=batch_tensor
+            )
+            logits_diffs1.append(diff)
+        logits_diffs1 = np.concatenate(logits_diffs1, axis=0) # (len(act_ids1), m)
+        model1.cpu()
+        sae1.cpu()
+        
+        # model2のバッチ処理
+        print(f"  Processing model2 (batch_size={batch_size})...")
+        model2.cuda()
+        sae2.cuda()
+        logits_diffs2 = []
+        for i in tqdm(range(0, len(act_ids2), batch_size), desc=f"  Model2 Layer {layer}", leave=False):
+            batch_ids = act_ids2[i:i+batch_size]
+            batch_tensor = torch.tensor(batch_ids).cuda()
+            diff = get_logits_diff(
+                model2, sae2, text, target_output, ablate_feat_ids=batch_tensor
+            )
+            logits_diffs2.append(diff)
+        logits_diffs2 = np.concatenate(logits_diffs2, axis=0) # (len(act_ids2), m)
+        model2.cpu()
+        sae2.cpu()
+        
+        # 層のattributionを構築
+        layer_attribution = []
+        for act_id1, act_id2, diff1, diff2 in zip(act_ids1, act_ids2, logits_diffs1, logits_diffs2):
+            layer_attribution.append({
                 'layer': layer,
                 'act_id1': act_id1,
                 'act_id2': act_id2,
-                'logits_change1': logits_change1.squeeze(),
-                'logits_change2': logits_change2.squeeze()
+                'diff1': diff1,
+                'diff2': diff2
             })
-        print(f"  Layer {layer} completed ({len(attribution_to_logits)} total features processed)")
         
-        # 現在の層のデータだけを保存
-        layer_df = pd.DataFrame([item for item in attribution_to_logits if item['layer'] == layer])
+        # 現在の層のデータを保存
+        layer_df = pd.DataFrame(layer_attribution)
         layer_df.to_parquet(os.path.join(save_dir, f"layer_{layer}.parquet"))
         print(f"  Saved to layer_{layer}.parquet")
-    print(f"\nAll processing completed. Total: {len(attribution_to_logits)} features")
-    return pd.DataFrame(attribution_to_logits)
+        
+    return
 
 if __name__ == "__main__":
+
     dotenv.load_dotenv()
     data_dir = os.getenv("DATA_DIR")
 
@@ -354,12 +386,13 @@ if __name__ == "__main__":
     similarities = pd.read_parquet(os.path.join(data_dir, "similarities.parquet"))
     prompt, target_output = get_answer(3)
     
-    attribution_to_logits = get_attribution_to_logits(
+    get_attribution_to_logits(
         target_output,
         prompt,
         similarities,
         save_dir=save_dir,
         threshold=0.9,
         start_layer=0,
-        end_layer=32  # 必要に応じて変更
+        end_layer=32,
+        batch_size=2
     )

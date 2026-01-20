@@ -197,4 +197,4 @@ if __name__ == "__main__":
     prompt, target_output = get_answer(N_DISKS)
     accuracy, act_feat_ids = run_batch(
         model, sae, prompt, target_output, batch_size=BATCH_SIZE)
-    save_results(accuracy, act_feat_ids, data_dir)
+    # save_results(accuracy, act_feat_ids, data_dir)
