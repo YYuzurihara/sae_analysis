@@ -3,6 +3,7 @@
 特に相関の高い特徴を抽出して分析する
 """
 
+from numpy.typing import ArrayLike
 import pandas as pd
 import dotenv
 import os
@@ -51,8 +52,8 @@ def get_logits_change(
     sae: SAE,
     text: str,
     target_output: str,
-    ablate_feat_ids: torch.Tensor # shape: [b]
-    ) -> torch.Tensor:
+    ablate_feat_ids: torch.Tensor # shape: [b], b=1
+    ) -> ArrayLike:
     """
     モデルに対してSAE活性値をablationしたときのtarget_tokenにおけるlogitsの変化を計算する
     """
@@ -82,9 +83,9 @@ def get_logits_change(
     logits = logits[:, -m-1:-1, :] # (b, m, vocab_size)
     logits_ablated = logits_ablated[:, -m-1:-1, :] # (b, m, vocab_size)
     logits_change = logits - logits_ablated # (b, m, vocab_size)
-    logits_change = logits_change[:, :, target_idx] # (b, m)
+    logits_change = logits_change[:, torch.arange(m), target_idx] # (b, m)
 
-    return logits_change
+    return logits_change.cpu().float().numpy()
 
 #########################################################################
 # end
@@ -104,6 +105,78 @@ def find_max_correlation_df(
     max_corrs_df = correlations.loc[idx].reset_index(drop=True)
     # act_id1, act_id2, correlationの全てを含むDataFrameを返す
     return max_corrs_df
+
+# 見づらかったので使わない
+# def visualize_all_correlations(
+#     layer1: int,
+#     layer2: int,
+#     save_dir: str
+# ) -> None:
+#     """
+#     指定した層の全ての特徴の相関を可視化する
+#     """
+#     correlations = load_correlation(layer1, layer2)
+    
+#     # データをピボットしてヒートマップ用の行列を作成
+#     heatmap_data = correlations.pivot(index='act_id1', columns='act_id2', values='correlation')
+    
+#     # ヒートマップを描画
+#     plt.figure(figsize=(12, 10))
+#     im = plt.imshow(heatmap_data.values, aspect='auto', cmap='viridis', origin='lower')
+#     plt.colorbar(im, label='Correlation')
+#     plt.xlabel('Deepseek R1 Distill Llama 8B')
+#     plt.ylabel('Llama3.1 8B')
+#     plt.title(f'Feature Correlation Heatmap (Layer1: {layer1}, Layer2: {layer2})')
+    
+#     save_path = os.path.join(save_dir, f"heatmap_l1_{layer1}_l2_{layer2}.png")
+#     plt.tight_layout()
+#     plt.savefig(save_path, dpi=150)
+#     plt.close()
+#     print(f"Saved heatmap to {save_path}")
+
+def visualize_high_correlation_count(
+    save_dir: str,
+    threshold: float = 0.9,
+    base: str = "act_id1"
+) -> None:
+    """
+    層ごとにbaseに対して高い相関を持つ特徴の数の分布をプロットする
+    32層を8x4に分割したグラフを1枚の画像として保存する
+    """
+    assert base in ["act_id1", "act_id2"], "base must be 'act_id1' or 'act_id2'"
+    
+    save_path = os.path.join(save_dir, f"high_correlation_count_threshold_{threshold}_{base}.png")
+    
+    fig, axes = plt.subplots(8, 4, figsize=(16, 24), constrained_layout=True)
+    
+    for layer in tqdm(range(32), desc="Processing layers"):
+        correlations = load_correlation(layer, layer)
+        # baseごとに相関がthreshold以上の特徴の数をカウント
+        high_correlations = correlations[correlations['correlation'] >= threshold]
+        count_per_base = high_correlations.groupby(base)['correlation'].count()
+        
+        row = layer // 4
+        col = layer % 4
+        ax = axes[row, col]
+        
+        # ヒストグラムで分布をプロット
+        ax.hist(count_per_base.values, bins=20, edgecolor='black', alpha=0.7)
+        ax.set_title(f"Layer {layer}")
+        ax.set_xlabel(f"Count (threshold={threshold})")
+        ax.set_ylabel("Frequency")
+        
+        # x軸を整数表示にする
+        ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
+        
+        # 統計情報を追加
+        mean_count = count_per_base.mean()
+        ax.axvline(mean_count, color='red', linestyle='--', linewidth=1, label=f'Mean={mean_count:.1f}')
+        ax.legend(fontsize=8)
+    
+    fig.suptitle(f"Distribution of High Correlation Counts per {base} (threshold={threshold})", fontsize=16)
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
+    print(f"Saved plot to {save_path}")
 
 def get_high_correlation_features(
     layer1: int,
@@ -235,8 +308,8 @@ def get_attribution_to_logits(
                 'layer': layer,
                 'act_id1': act_id1,
                 'act_id2': act_id2,
-                'attribution_to_logits1': logits_change1,
-                'attribution_to_logits2': logits_change2
+                'logits_change1': logits_change1.squeeze(),
+                'logits_change2': logits_change2.squeeze()
             })
         print(f"  Layer {layer} completed ({len(attribution_to_logits)} total features processed)")
         
@@ -244,7 +317,6 @@ def get_attribution_to_logits(
         layer_df = pd.DataFrame([item for item in attribution_to_logits if item['layer'] == layer])
         layer_df.to_parquet(os.path.join(save_dir, f"layer_{layer}.parquet"))
         print(f"  Saved to layer_{layer}.parquet")
-    
     print(f"\nAll processing completed. Total: {len(attribution_to_logits)} features")
     return pd.DataFrame(attribution_to_logits)
 
@@ -262,7 +334,20 @@ if __name__ == "__main__":
     # similarities.to_parquet(os.path.join(data_dir, "similarities.parquet"))
     # visualize_feature_similarities(similarities, "./images/compare_features/feature_similarities.png")
 
-    # step2: 特徴活性値のcos類似度が閾値以上のものについてlogitsの変化を計算する
+    # step2: 全ての層の特徴の相関を可視化する
+    # os.makedirs("./images/high_correlation_count", exist_ok=True)
+    # visualize_high_correlation_count(
+    #     save_dir="./images/high_correlation_count",
+    #     threshold=0.9,
+    #     base="act_id1"
+    # )
+    # visualize_high_correlation_count(
+    #     save_dir="./images/high_correlation_count",
+    #     threshold=0.9,
+    #     base="act_id2"
+    # )
+
+    # step3: 特徴活性値のcos類似度が閾値以上のものについてlogitsの変化を計算する
     save_dir = os.path.join(data_dir, "attribution")
     os.makedirs(save_dir, exist_ok=True)
 
@@ -270,9 +355,9 @@ if __name__ == "__main__":
     prompt, target_output = get_answer(3)
     
     attribution_to_logits = get_attribution_to_logits(
-        target_output, 
-        prompt, 
-        similarities, 
+        target_output,
+        prompt,
+        similarities,
         save_dir=save_dir,
         threshold=0.9,
         start_layer=0,
