@@ -15,7 +15,7 @@ def load_model(
     model: HookedTransformer|None=None,
     sae: SAE|None=None,
     skip_hf_model: bool=False
-    ) -> tuple[HookedTransformer, SAE|None]:
+    ) -> tuple[HookedTransformer, SAE]:
 
     if model_config.hf_model_name is not None and not skip_hf_model:
         hf_model = AutoModelForCausalLM.from_pretrained(
