@@ -11,7 +11,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from visualize_correlation import load_correlation
-from analyze_correlation import load_activation, get_feature_acts
+from analyze_correlation import load_activation_hanoi, load_activation_addition, get_feature_acts
 
 #########################################################################
 # モデルに対してSAE活性値をablationしたときのlogitsの変化を計算する
@@ -204,10 +204,11 @@ def get_feature_similarities(
     pd.DataFrame with columns: layer, act_id1, act_id2, similarity
     """
     similarities = []
-    for layer in tqdm(range(32)):
+    for layer in tqdm(range(32), desc="Layer", position=0):
         max_corrs_df = find_max_correlation_df(layer, layer, base="act_id1")
 
-        for act_id1, act_id2 in zip(max_corrs_df['act_id1'], max_corrs_df['act_id2']):
+        pairs = list(zip(max_corrs_df['act_id1'], max_corrs_df['act_id2']))
+        for act_id1, act_id2 in tqdm(pairs, desc=f"Layer {layer}", position=1, leave=False):
             feature_acts1 = get_feature_acts(data1, layer, act_id1)
             feature_acts2 = get_feature_acts(data2, layer, act_id2)
             if feature_acts1.size == 0 or feature_acts2.size == 0:
@@ -357,14 +358,14 @@ if __name__ == "__main__":
     data_dir = os.getenv("DATA_DIR")
 
     # step1: 特徴活性値のcos類似度を計算する
-    # data_llama = load_activation("LLAMA_DIR")
-    # data_llama_distill = load_activation("LLAMA_DISTILL_DIR")
+    data_llama = load_activation_addition("LLAMA_DIR")
+    data_llama_distill = load_activation_addition("LLAMA_DISTILL_DIR")
 
-    # os.makedirs("./images/compare_features", exist_ok=True)
-    # os.makedirs(data_dir, exist_ok=True)
-    # similarities = get_feature_similarities(data_llama, data_llama_distill)
-    # similarities.to_parquet(os.path.join(data_dir, "similarities.parquet"))
-    # visualize_feature_similarities(similarities, "./images/compare_features/feature_similarities.png")
+    os.makedirs("./images/compare_features_addition", exist_ok=True)
+    os.makedirs(data_dir, exist_ok=True)
+    similarities = get_feature_similarities(data_llama, data_llama_distill)
+    similarities.to_parquet(os.path.join(data_dir, "similarities.parquet"))
+    visualize_feature_similarities(similarities, "./images/compare_features/feature_similarities_addition.png")
 
     # step2: 全ての層の特徴の相関を可視化する
     # os.makedirs("./images/high_correlation_count", exist_ok=True)
@@ -380,19 +381,19 @@ if __name__ == "__main__":
     # )
 
     # step3: 特徴活性値のcos類似度が閾値以上のものについてlogitsの変化を計算する
-    save_dir = os.path.join(data_dir, "attribution")
-    os.makedirs(save_dir, exist_ok=True)
+    # save_dir = os.path.join(data_dir, "attribution")
+    # os.makedirs(save_dir, exist_ok=True)
 
-    similarities = pd.read_parquet(os.path.join(data_dir, "similarities.parquet"))
-    prompt, target_output = get_answer(3)
+    # similarities = pd.read_parquet(os.path.join(data_dir, "similarities.parquet"))
+    # prompt, target_output = get_answer(3)
     
-    get_attribution_to_logits(
-        target_output,
-        prompt,
-        similarities,
-        save_dir=save_dir,
-        threshold=0.9,
-        start_layer=0,
-        end_layer=32,
-        batch_size=2
-    )
+    # get_attribution_to_logits(
+    #     target_output,
+    #     prompt,
+    #     similarities,
+    #     save_dir=save_dir,
+    #     threshold=0.9,
+    #     start_layer=0,
+    #     end_layer=32,
+    #     batch_size=2
+    # )
