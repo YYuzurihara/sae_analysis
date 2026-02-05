@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-analyze_correlation.pyを並列実行し、全体の進捗をtqdmで表示
+analyze_cos_sim.pyを並列実行し、全体の進捗をtqdmで表示
 """
 import subprocess
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -10,7 +10,7 @@ import argparse
 
 def run_single_task(layer1, layer2):
     """単一タスクを実行"""
-    cmd = ["uv", "run", "analyze_correlation.py", "--layer1", str(layer1), "--layer2", str(layer2)]
+    cmd = ["uv", "run", "analyze_cos_sim.py", "--layer1", str(layer1), "--layer2", str(layer2), "--dataset", "hanoi"]
     try:
         result = subprocess.run(
             cmd,
@@ -24,7 +24,7 @@ def run_single_task(layer1, layer2):
         return (layer1, layer2, False, str(e))
 
 def main():
-    parser = argparse.ArgumentParser(description="Run correlation analysis in parallel")
+    parser = argparse.ArgumentParser(description="Run cosine similarity analysis in parallel")
     parser.add_argument("--workers", type=int, default=32, help="Number of parallel workers")
     parser.add_argument("--start", type=int, default=0, help="Start layer (inclusive)")
     parser.add_argument("--end", type=int, default=32, help="End layer (exclusive)")

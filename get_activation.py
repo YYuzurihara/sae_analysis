@@ -26,7 +26,7 @@ def collection_hook(
     if tail_length is not None:
         feature_acts = feature_acts[:, -tail_length:, :]
     else:
-        feature_acts = feature_acts[:, 1:, :]
+        feature_acts = feature_acts[:, 2:, :]
 
     if decode is not None:
         target_acts = decode(feature_acts)
@@ -143,7 +143,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     dotenv.load_dotenv()
-    data_dir = os.getenv("LLAMA_DIR")
+    data_dir = os.getenv("LLAMA_DISTILL_DIR")
     
     # 進捗バーの出力を抑制（オプション）
     os.environ["TRANSFORMERS_VERBOSITY"] = "error"
@@ -153,8 +153,8 @@ if __name__ == "__main__":
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
     # model config
-    MODEL_CONFIG = llama_scope_lxr_32x(DEVICE, LAYER)
-    # MODEL_CONFIG = llama_scope_r1_distill(DEVICE, LAYER)
+    # MODEL_CONFIG = llama_scope_lxr_32x(DEVICE, LAYER)
+    MODEL_CONFIG = llama_scope_r1_distill(DEVICE, LAYER)
     
     # get_act_prob_hanoi(LAYER, MODEL_CONFIG, data_dir)
     get_act_prob_addition(LAYER, MODEL_CONFIG, data_dir)

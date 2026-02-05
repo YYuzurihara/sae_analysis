@@ -86,29 +86,6 @@ def get_unique_ids(data: pd.DataFrame, layer: int) -> ArrayLike:
     # 一意な要素を返す
     return np.unique(all_ids)
 
-def get_feature_acts(data: pd.DataFrame, layer: int, act_id: int) -> ArrayLike:
-    filtered_data = data[(data["layer"] == layer)]
-    
-    # 各行からact_idに対応するfeature_actsを取得
-    feature_acts_list = []
-    for _, row in filtered_data.iterrows():
-        act_ids = row["act_ids"]  # shape: (n,)
-        feature_acts = row["feature_acts"]  # shape: (1, m, n)
-        
-        # act_idsの中からact_idのインデックスを探す
-        indices = np.where(act_ids == act_id)[0]
-        if len(indices) > 0:
-            i = indices[0]
-            feature_acts_list.append(feature_acts[0, :, i])  # shape: (m,)
-        else:
-            feature_acts_list.append(np.zeros(feature_acts.shape[1]))
-    
-    # すべてのfeature_actsを結合
-    if len(feature_acts_list) > 0:
-        return np.concatenate(feature_acts_list)
-    else:
-        return np.array([])
-
 def build_feature_matrix(data: pd.DataFrame, layer: int, unique_ids: ArrayLike, total_seqlen: int) -> np.ndarray:
     """
     全てのact_idに対するfeature_actsを事前に行列形式で構築
